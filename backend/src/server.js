@@ -179,31 +179,26 @@ app.post("/import/edi", upload.single("file"), async (req, res) => {
     const ediText = req.file.buffer.toString("utf8");
     const messageType = detectMessageType(ediText);
 
-    // 1) voyage
     const v = await pool.query(
       "insert into voyages (vessel_name, voyage_code) values ($1,$2) returning *",
       [vessel_name, voyage_code]
     );
     const voyage = v.rows[0];
 
-    // 2) workset OPERATION
     const w = await pool.query(
       "insert into worksets (voyage_id, type) values ($1,'OPERATION') returning *",
       [voyage.id]
     );
     const workset = w.rows[0];
 
-    // 3) edi_import
     const imp = await pool.query(
       "insert into edi_imports (voyage_id, workset_id, filename, message_type) values ($1,$2,$3,$4) returning *",
       [voyage.id, workset.id, req.file.originalname || null, messageType]
     );
     const ediImport = imp.rows[0];
 
-    // 4) parse units
     const units = parseBaplieMinimal(ediText);
 
-    // 5) insert stowage_units + containers + operations
     const bayAreaSet = new Set();
     let containersInserted = 0;
 
@@ -219,7 +214,6 @@ app.post("/import/edi", upload.single("file"), async (req, res) => {
         [ediImport.id, u.container_no, u.iso_type, u.bay, u.row, u.tier, area, u.raw_pos]
       );
 
-      // containers (dedupe por workset_id + container_no)
       const c = await pool.query(
         `insert into containers (workset_id, container_no, iso_type, bay, row, tier, area)
          values ($1,$2,$3,$4,$5,$6,$7)
@@ -257,6 +251,41 @@ app.post("/import/edi", upload.single("file"), async (req, res) => {
     console.error(err);
     return res.status(500).json({ ok: false, error: String(err?.message || err) });
   }
+});
+
+// --------- BAYVIEW (dados p/ UI) ----------
+app.get("/bayview", async (req, res) => {
+  const { workset_id, bay, area } = req.query;
+  if (!workset_id || !bay || !area) {
+    return res.status(400).json({ error: "workset_id, bay and area are required" });
+  }
+  if (!["DECK", "HOLD"].includes(area)) {
+    return res.status(400).json({ error: "area must be DECK or HOLD" });
+  }
+
+  const r = await pool.query(
+    `select
+       container_no,
+       iso_type,
+       bay,
+       row,
+       tier,
+       area,
+       status,
+       done_at
+     from containers
+     where workset_id = $1 and bay = $2 and area = $3
+     order by tier desc nulls last, row asc nulls last, container_no asc`,
+    [workset_id, bay, area]
+  );
+
+  res.json({
+    workset_id: Number(workset_id),
+    bay: Number(bay),
+    area,
+    count: r.rows.length,
+    containers: r.rows
+  });
 });
 
 const PORT = Number(process.env.PORT) || 3000;
