@@ -8,7 +8,7 @@ import multer from "multer";
 const app = express();
 app.use(express.json());
 
-// CORS (para Hoppscotch / browser)
+// CORS
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
@@ -17,7 +17,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// helpers p/ ler SQL
+// helpers
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -28,6 +28,7 @@ async function initDb() {
   await pool.query(fs.readFileSync(path.join(__dirname, "sql", "create_paralisations.sql"), "utf8"));
   await pool.query(fs.readFileSync(path.join(__dirname, "sql", "create_edi_imports.sql"), "utf8"));
   await pool.query(fs.readFileSync(path.join(__dirname, "sql", "create_stowage_units.sql"), "utf8"));
+  await pool.query(fs.readFileSync(path.join(__dirname, "sql", "create_containers.sql"), "utf8"));
   console.log("DB initialized");
 }
 
@@ -115,14 +116,13 @@ app.get("/paralisations", async (req, res) => {
   res.json(r.rows);
 });
 
-// --------- IMPORTADOR EDI (MVP) ----------
+// --------- IMPORTADOR EDI ----------
 const upload = multer({ storage: multer.memoryStorage() });
 
 function detectMessageType(ediText) {
   const flat = ediText.replace(/\n/g, "");
   const segs = flat.split("'");
-  const unh = segs.find(s => s.startsWith("UNH+"));
-  return unh ? unh : null;
+  return segs.find(s => s.startsWith("UNH+")) || null;
 }
 
 function parseBaplieMinimal(ediText) {
@@ -134,26 +134,17 @@ function parseBaplieMinimal(ediText) {
 
   for (const s of segs) {
     if (s.startsWith("EQD+CN+")) {
-      // fecha anterior
       if (current) units.push(current);
 
       const parts = s.split("+");
       const containerNo = parts[2] || null;
       const isoType = parts[3] || null;
 
-      current = {
-        container_no: containerNo,
-        iso_type: isoType,
-        bay: null,
-        row: null,
-        tier: null,
-        raw_pos: null
-      };
+      current = { container_no: containerNo, iso_type: isoType, bay: null, row: null, tier: null, raw_pos: null };
       continue;
     }
 
     if (current && s.startsWith("LOC+147+")) {
-      // posição BAPLIE: BBBRRTT (3+2+2 = 7)
       const posPart = s.split("+")[2] || "";
       const pos = posPart.split(":")[0] || "";
       if (pos.length >= 7) {
@@ -168,10 +159,7 @@ function parseBaplieMinimal(ediText) {
       continue;
     }
   }
-
   if (current) units.push(current);
-
-  // filtra registros ruins
   return units.filter(u => u.container_no);
 }
 
@@ -212,11 +200,12 @@ app.post("/import/edi", upload.single("file"), async (req, res) => {
     );
     const ediImport = imp.rows[0];
 
-    // 4) parse containers (EQD+CN + LOC+147)
+    // 4) parse units
     const units = parseBaplieMinimal(ediText);
 
-    // 5) insert units + coletar bays/areas
+    // 5) insert stowage_units + containers + operations
     const bayAreaSet = new Set();
+    let containersInserted = 0;
 
     for (const u of units) {
       const tier = u.tier;
@@ -229,9 +218,23 @@ app.post("/import/edi", upload.single("file"), async (req, res) => {
          values ($1,$2,$3,$4,$5,$6,$7,$8)`,
         [ediImport.id, u.container_no, u.iso_type, u.bay, u.row, u.tier, area, u.raw_pos]
       );
+
+      // containers (dedupe por workset_id + container_no)
+      const c = await pool.query(
+        `insert into containers (workset_id, container_no, iso_type, bay, row, tier, area)
+         values ($1,$2,$3,$4,$5,$6,$7)
+         on conflict (workset_id, container_no) do update
+           set iso_type = excluded.iso_type,
+               bay = excluded.bay,
+               row = excluded.row,
+               tier = excluded.tier,
+               area = excluded.area
+         returning id`,
+        [workset.id, u.container_no, u.iso_type, u.bay, u.row, u.tier, area]
+      );
+      if (c.rowCount) containersInserted += 1;
     }
 
-    // 6) criar operations por bay/area existentes (para seu seletor “pular bays sem operação”)
     for (const key of bayAreaSet) {
       const [bayStr, area] = key.split("|");
       const bay = parseInt(bayStr, 10);
@@ -247,6 +250,7 @@ app.post("/import/edi", upload.single("file"), async (req, res) => {
       workset_id: workset.id,
       import_id: ediImport.id,
       containers_parsed: units.length,
+      containers_saved: containersInserted,
       bays_with_ops: bayAreaSet.size
     });
   } catch (err) {
