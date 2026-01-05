@@ -21,18 +21,15 @@ const __dirname = path.dirname(__filename);
 async function initDb() {
   // tabela voyages
   const voyagesPath = path.join(__dirname, "sql", "create_voyages.sql");
-  const voyagesSql = fs.readFileSync(voyagesPath, "utf8");
-  await pool.query(voyagesSql);
+  await pool.query(fs.readFileSync(voyagesPath, "utf8"));
 
   // tabela worksets
   const worksetsPath = path.join(__dirname, "sql", "create_worksets.sql");
-  const worksetsSql = fs.readFileSync(worksetsPath, "utf8");
-  await pool.query(worksetsSql);
+  await pool.query(fs.readFileSync(worksetsPath, "utf8"));
 
   // tabela operations
   const operationsPath = path.join(__dirname, "sql", "create_operations.sql");
-  const operationsSql = fs.readFileSync(operationsPath, "utf8");
-  await pool.query(operationsSql);
+  await pool.query(fs.readFileSync(operationsPath, "utf8"));
 
   console.log("DB initialized");
 }
@@ -48,13 +45,12 @@ app.get("/db-health", async (req, res) => {
   }
 });
 
-// ENDPOINTS DA TABELA VOYAGES
+// VOYAGES
 app.post("/voyages", async (req, res) => {
   const { vessel_name, voyage_code } = req.body;
   if (!vessel_name || !voyage_code) {
     return res.status(400).json({ error: "vessel_name and voyage_code are required" });
   }
-
   const r = await pool.query(
     "insert into voyages (vessel_name, voyage_code) values ($1,$2) returning *",
     [vessel_name, voyage_code]
@@ -63,13 +59,11 @@ app.post("/voyages", async (req, res) => {
 });
 
 app.get("/voyages", async (req, res) => {
-  const r = await pool.query(
-    "select * from voyages order by created_at desc"
-  );
+  const r = await pool.query("select * from voyages order by created_at desc");
   res.json(r.rows);
 });
 
-// ENDPOINTS DA TABELA WORKSETS
+// WORKSETS
 app.post("/worksets", async (req, res) => {
   const { voyage_id, type } = req.body;
   if (!voyage_id || !type) {
@@ -78,7 +72,6 @@ app.post("/worksets", async (req, res) => {
   if (!["OPERATION", "PARALISATION"].includes(type)) {
     return res.status(400).json({ error: "type must be OPERATION or PARALISATION" });
   }
-
   const r = await pool.query(
     "insert into worksets (voyage_id, type) values ($1,$2) returning *",
     [voyage_id, type]
@@ -94,6 +87,40 @@ app.get("/worksets", async (req, res) => {
   const r = await pool.query(
     "select * from worksets where voyage_id = $1 order by created_at desc",
     [voyage_id]
+  );
+  res.json(r.rows);
+});
+
+// OPERATIONS
+app.post("/operations", async (req, res) => {
+  const { workset_id, operation_type, bay, area } = req.body;
+
+  if (!workset_id || !operation_type || !bay || !area) {
+    return res.status(400).json({ error: "workset_id, operation_type, bay and area are required" });
+  }
+  if (!["LOAD", "DISCHARGE"].includes(operation_type)) {
+    return res.status(400).json({ error: "operation_type must be LOAD or DISCHARGE" });
+  }
+  if (!["DECK", "HOLD"].includes(area)) {
+    return res.status(400).json({ error: "area must be DECK or HOLD" });
+  }
+
+  const r = await pool.query(
+    `insert into operations (workset_id, operation_type, bay, area)
+     values ($1,$2,$3,$4) returning *`,
+    [workset_id, operation_type, bay, area]
+  );
+  res.status(201).json(r.rows[0]);
+});
+
+app.get("/operations", async (req, res) => {
+  const { workset_id } = req.query;
+  if (!workset_id) {
+    return res.status(400).json({ error: "workset_id is required" });
+  }
+  const r = await pool.query(
+    "select * from operations where workset_id = $1 order by created_at desc",
+    [workset_id]
   );
   res.json(r.rows);
 });
