@@ -90,6 +90,30 @@ app.get("/operations", async (req, res) => {
   res.json(r.rows);
 });
 
+// PARALISATIONS
+app.post("/paralisations", async (req, res) => {
+  const { workset_id, started_at, ended_at, reason, notes } = req.body;
+  if (!workset_id || !started_at || !reason) {
+    return res.status(400).json({ error: "workset_id, started_at and reason are required" });
+  }
+  const r = await pool.query(
+    `insert into paralisations (workset_id, started_at, ended_at, reason, notes)
+     values ($1,$2,$3,$4,$5) returning *`,
+    [workset_id, started_at, ended_at || null, reason, notes || null]
+  );
+  res.status(201).json(r.rows[0]);
+});
+
+app.get("/paralisations", async (req, res) => {
+  const { workset_id } = req.query;
+  if (!workset_id) return res.status(400).json({ error: "workset_id is required" });
+  const r = await pool.query(
+    "select * from paralisations where workset_id = $1 order by started_at desc",
+    [workset_id]
+  );
+  res.json(r.rows);
+});
+
 const PORT = Number(process.env.PORT) || 3000;
 
 initDb()
