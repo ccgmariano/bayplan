@@ -64,6 +64,36 @@ app.get("/voyages", async (req, res) => {
   res.json(r.rows);
 });
 
+// ENDPOINTS DA TABELA WORKSETS
+app.post("/worksets", async (req, res) => {
+  const { voyage_id, type } = req.body;
+  if (!voyage_id || !type) {
+    return res.status(400).json({ error: "voyage_id and type are required" });
+  }
+  if (!["OPERATION", "PARALISATION"].includes(type)) {
+    return res.status(400).json({ error: "type must be OPERATION or PARALISATION" });
+  }
+
+  const r = await pool.query(
+    "insert into worksets (voyage_id, type) values ($1,$2) returning *",
+    [voyage_id, type]
+  );
+  res.status(201).json(r.rows[0]);
+});
+
+app.get("/worksets", async (req, res) => {
+  const { voyage_id } = req.query;
+  if (!voyage_id) {
+    return res.status(400).json({ error: "voyage_id is required" });
+  }
+  const r = await pool.query(
+    "select * from worksets where voyage_id = $1 order by created_at desc",
+    [voyage_id]
+  );
+  res.json(r.rows);
+});
+
+
 const PORT = Number(process.env.PORT) || 3000;
 
 initDb()
