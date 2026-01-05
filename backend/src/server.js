@@ -14,15 +14,21 @@ app.use((req, res, next) => {
   next();
 });
 
-
 // helpers p/ ler SQL
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function initDb() {
-  const sqlPath = path.join(__dirname, "sql", "create_voyages.sql");
-  const sql = fs.readFileSync(sqlPath, "utf8");
-  await pool.query(sql);
+  // tabela voyages
+  const voyagesPath = path.join(__dirname, "sql", "create_voyages.sql");
+  const voyagesSql = fs.readFileSync(voyagesPath, "utf8");
+  await pool.query(voyagesSql);
+
+  // tabela worksets
+  const worksetsPath = path.join(__dirname, "sql", "create_worksets.sql");
+  const worksetsSql = fs.readFileSync(worksetsPath, "utf8");
+  await pool.query(worksetsSql);
+
   console.log("DB initialized");
 }
 
@@ -37,12 +43,13 @@ app.get("/db-health", async (req, res) => {
   }
 });
 
-// ENDPOINTS DA 1ª TABELA
+// ENDPOINTS DA TABELA VOYAGES
 app.post("/voyages", async (req, res) => {
   const { vessel_name, voyage_code } = req.body;
   if (!vessel_name || !voyage_code) {
     return res.status(400).json({ error: "vessel_name and voyage_code are required" });
   }
+
   const r = await pool.query(
     "insert into voyages (vessel_name, voyage_code) values ($1,$2) returning *",
     [vessel_name, voyage_code]
