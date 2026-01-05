@@ -29,6 +29,11 @@ async function initDb() {
   const worksetsSql = fs.readFileSync(worksetsPath, "utf8");
   await pool.query(worksetsSql);
 
+  // tabela operations
+  const operationsPath = path.join(__dirname, "sql", "create_operations.sql");
+  const operationsSql = fs.readFileSync(operationsPath, "utf8");
+  await pool.query(operationsSql);
+
   console.log("DB initialized");
 }
 
@@ -92,7 +97,6 @@ app.get("/worksets", async (req, res) => {
   );
   res.json(r.rows);
 });
-
 
 const PORT = Number(process.env.PORT) || 3000;
 
