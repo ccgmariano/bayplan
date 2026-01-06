@@ -1,189 +1,418 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>BayPlan</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BayPlan</title>
+  <style>
+    :root { font-family: Arial, Helvetica, sans-serif; }
+    body { margin: 0; padding: 12px; background: #f6f7f8; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; }
+    h1 { margin: 0 0 8px 0; font-size: 18px; }
 
-<style>
-body{margin:0;padding:12px;font-family:Arial;background:#f6f7f8}
-.card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px}
-h1{margin:0 0 8px 0;font-size:18px}
-.section{margin-top:10px}
-.row{display:flex;gap:8px;flex-wrap:wrap}
-button{height:36px;padding:0 14px;border-radius:8px;border:1px solid #d1d5db;background:#fff;cursor:pointer}
-button.active{background:#111827;color:#fff;border-color:#111827}
-button.small{height:32px;font-size:13px}
-.meta{font-size:12px;color:#374151;margin-top:6px}
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .section { margin-top: 10px; }
 
-.gridWrap{margin-top:12px;overflow:auto;border-radius:10px;border:1px solid #e5e7eb;background:#fff}
-table{border-collapse:collapse;width:max-content;min-width:100%}
-th,td{border:1px solid #e5e7eb;padding:6px;text-align:center}
-th{position:sticky;top:0;background:#f3f4f6}
-th.left,td.left{position:sticky;left:0;background:#f9fafb;font-weight:700}
+    label { font-size: 12px; color: #374151; }
+    input, button {
+      height: 36px; border-radius: 8px; border: 1px solid #d1d5db;
+      padding: 0 10px; font-size: 14px; background: #fff;
+    }
+    button { cursor: pointer; }
+    button.active { background: #111827; color: #fff; border-color: #111827; }
+    button.small { height: 32px; font-size: 13px; padding: 0 12px; }
+    .hint { margin-top: 6px; font-size: 12px; color: #6b7280; }
+    .status { margin-top: 8px; font-size: 12px; color: #111827; }
+    .status.error { color: #b91c1c; }
+    .meta { margin-top: 6px; font-size: 12px; color: #374151; }
 
-.cell{width:112px;height:56px;border-radius:8px;padding:6px;display:flex;flex-direction:column;justify-content:center;cursor:pointer}
-.cell.empty{background:#fafafa;cursor:default}
-.cell.done{background:#e7f7ee}
-.cn{font-weight:800;font-size:12px}
-.iso,.st{font-size:11px;color:#6b7280}
-.st.done{color:#065f46;font-weight:700}
-</style>
+    .gridWrap { margin-top: 12px; overflow: auto; border-radius: 10px; border: 1px solid #e5e7eb; background: #fff; }
+    table { border-collapse: collapse; width: max-content; min-width: 100%; }
+    th, td { border: 1px solid #e5e7eb; padding: 6px; text-align: center; }
+    th { position: sticky; top: 0; background: #f3f4f6; z-index: 2; }
+    th.left { position: sticky; left: 0; z-index: 3; }
+    td.left { position: sticky; left: 0; background: #f9fafb; z-index: 1; font-weight: 700; }
+
+    .cell {
+      width: 140px; height: 74px; border-radius: 8px; padding: 6px;
+      display: flex; flex-direction: column; justify-content: center; gap: 2px;
+      cursor: pointer; user-select: none; background: #ffffff;
+    }
+    .cell.empty { cursor: default; background: #fafafa; }
+    .cell.done { background: #e7f7ee; }
+
+    .pos { font-size: 11px; color: #111827; font-weight: 700; }
+    .cn  { font-weight: 800; font-size: 12px; color: #111827; }
+    .iso { font-size: 11px; color: #6b7280; }
+    .od  { font-size: 11px; color: #6b7280; }
+    .wt  { font-size: 11px; color: #6b7280; }
+    .st  { font-size: 11px; color: #6b7280; }
+
+    .cell.done .st { color: #065f46; font-weight: 700; }
+  </style>
 </head>
-
 <body>
-<div class="card">
-  <h1 id="vessel">BayPlan</h1>
 
-  <!-- OPERAÇÃO -->
-  <div class="section">
+  <div class="card">
+    <h1 id="title">BayPlan</h1>
+
+    <!-- Config -->
     <div class="row">
+      <div>
+        <label>API Base</label><br />
+        <input id="apiBase" value="https://bayplan-1.onrender.com" style="width:260px" />
+      </div>
+      <div>
+        <label>workset_id</label><br />
+        <input id="worksetId" type="number" value="3" style="width:110px" />
+      </div>
+      <div style="display:flex; gap:8px; align-items:flex-end;">
+        <button id="btnReload" class="active">Recarregar</button>
+      </div>
+    </div>
+
+    <div class="section row">
       <button id="btnDISCHARGE" class="active">DISCHARGE</button>
       <button id="btnLOAD">LOAD</button>
     </div>
-  </div>
 
-  <!-- BAYS -->
-  <div class="section">
-    <div class="row" id="bayButtons"></div>
-  </div>
-
-  <!-- ÁREA -->
-  <div class="section">
-    <div class="row">
+    <div class="section row">
       <button id="btnDECK">DECK</button>
       <button id="btnHOLD" class="active">HOLD</button>
     </div>
+
+    <div class="section">
+      <div class="row" id="bayButtons"></div>
+      <div class="hint">Bays exibidas = somente bays retornadas pelo endpoint <b>/ops-bays</b> (sem bays inventadas).</div>
+    </div>
+
+    <div id="status" class="status"></div>
+    <div id="meta" class="meta"></div>
   </div>
 
-  <div class="meta" id="meta"></div>
-</div>
-
-<div class="gridWrap">
-  <table id="grid"></table>
-</div>
+  <div class="gridWrap">
+    <table id="gridTable"></table>
+  </div>
 
 <script>
-const API = "https://bayplan-1.onrender.com";
-const WORKSET_ID = 3;
+  const $ = (id) => document.getElementById(id);
 
-let state = {
-  op: "DISCHARGE",
-  bay: null,
-  area: "HOLD"
-};
+  const state = {
+    op: "DISCHARGE",
+    area: "HOLD",
+    bay: null,
+    bayAreas: new Map(), // bay -> Set(areas disponíveis)
+  };
 
-async function apiGet(url){
-  const r = await fetch(url);
-  if(!r.ok) throw new Error(await r.text());
-  return r.json();
-}
+  function setStatus(msg, isError=false) {
+    const el = $("status");
+    el.textContent = msg || "";
+    el.className = "status" + (isError ? " error" : "");
+  }
 
-// ---------------- OPS-BAYS ----------------
-async function loadBays(){
-  const data = await apiGet(`${API}/ops-bays?workset_id=${WORKSET_ID}&operation_type=${state.op}`);
-  const wrap = document.getElementById("bayButtons");
-  wrap.innerHTML = "";
-  state.bay = null;
+  function apiBase() {
+    return ($("apiBase").value || "").replace(/\/+$/, "");
+  }
 
-  data.items.forEach(it=>{
-    const b = document.createElement("button");
-    b.textContent = `Bay ${it.bay}`;
-    b.className = "small";
-    b.onclick = ()=>{
-      document.querySelectorAll("#bayButtons button").forEach(x=>x.classList.remove("active"));
-      b.classList.add("active");
-      state.bay = it.bay;
-      loadGrid();
-    };
-    wrap.appendChild(b);
-  });
-}
+  async function httpJson(url, options={}) {
+    const res = await fetch(url, options);
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { /* ignore */ }
+    if (!res.ok) {
+      const msg = (data && (data.error || data.message)) ? (data.error || data.message) : text;
+      throw new Error(msg || `HTTP ${res.status}`);
+    }
+    return data;
+  }
 
-// ---------------- GRID ----------------
-async function loadGrid(){
-  if(!state.bay) return;
-  const d = await apiGet(`${API}/baygrid?workset_id=${WORKSET_ID}&bay=${state.bay}&area=${state.area}`);
-  document.getElementById("meta").innerHTML =
-    `Bay ${d.bay} (${d.area}) — Containers: ${d.stats.containers}`;
+  function setOp(op) {
+    state.op = op;
+    $("btnDISCHARGE").classList.toggle("active", op === "DISCHARGE");
+    $("btnLOAD").classList.toggle("active", op === "LOAD");
+  }
 
-  renderGrid(d);
-}
+  function setArea(area) {
+    state.area = area;
+    $("btnDECK").classList.toggle("active", area === "DECK");
+    $("btnHOLD").classList.toggle("active", area === "HOLD");
+  }
 
-function renderGrid(d){
-  const g = document.getElementById("grid");
-  g.innerHTML = "";
+  function setBay(bay) {
+    state.bay = bay;
+    document.querySelectorAll("#bayButtons button").forEach(b => b.classList.remove("active"));
+    const btn = document.querySelector(`#bayButtons button[data-bay="${bay}"]`);
+    if (btn) btn.classList.add("active");
+  }
 
-  const thead = document.createElement("thead");
-  const trh = document.createElement("tr");
-  trh.innerHTML = `<th class="left">T\\R</th>` + d.rows_order.map(r=>`<th>${r}</th>`).join("");
-  thead.appendChild(trh);
-  g.appendChild(thead);
+  function formatPos(bay, row, tier) {
+    // exibe como no PDF: 440914 (bay 44, row 09, tier 14) ou com 0 à esquerda conforme necessário
+    const b = String(Number(bay)).padStart(2, "0");     // 44
+    const r = String(Number(row)).padStart(2, "0");     // 09
+    const t = String(Number(tier)).padStart(2, "0");    // 14
+    return `${b}${r}${t}`;
+  }
 
-  const tb = document.createElement("tbody");
-  d.tiers_order.forEach(t=>{
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td class="left">${t}</td>`;
-    d.rows_order.forEach(r=>{
-      const c = d.grid[r]?.[t];
-      const td = document.createElement("td");
-      if(!c){
-        td.innerHTML = `<div class="cell empty"></div>`;
-      } else {
-        td.innerHTML = `
-          <div class="cell ${c.status==="DONE"?"done":""}">
-            <div class="cn">${c.container_no}</div>
-            <div class="iso">${c.iso_type}</div>
-            <div class="st ${c.status==="DONE"?"done":""}">${c.status}</div>
-          </div>`;
-        td.onclick = async ()=>{
-          if(c.status==="DONE") return;
-          await fetch(`${API}/containers/done`,{
-            method:"POST",
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({workset_id:WORKSET_ID,container_no:c.container_no})
+  // ------------------
+  // Carrega bays via /ops-bays e AGRUPA por bay (dedupe)
+  // ------------------
+  async function loadBays() {
+    setStatus("Carregando bays...");
+    const worksetId = Number($("worksetId").value);
+    const url = `${apiBase()}/ops-bays?workset_id=${encodeURIComponent(worksetId)}&operation_type=${encodeURIComponent(state.op)}`;
+    const data = await httpJson(url);
+
+    state.bayAreas.clear();
+
+    // data.items vem como [{bay, area}, ...] — vamos agrupar por bay
+    for (const it of (data.items || [])) {
+      const bay = Number(it.bay);
+      const area = String(it.area);
+      if (!state.bayAreas.has(bay)) state.bayAreas.set(bay, new Set());
+      state.bayAreas.get(bay).add(area);
+    }
+
+    const bays = Array.from(state.bayAreas.keys()).sort((a,b) => a-b);
+
+    const wrap = $("bayButtons");
+    wrap.innerHTML = "";
+
+    if (bays.length === 0) {
+      setStatus("Nenhuma bay com operação encontrada para esse workset_id/operação.", true);
+      $("gridTable").innerHTML = "";
+      $("meta").textContent = "";
+      state.bay = null;
+      return;
+    }
+
+    // renderiza botões de bay
+    for (const bay of bays) {
+      const btn = document.createElement("button");
+      btn.className = "small";
+      btn.textContent = `Bay ${bay}`;
+      btn.dataset.bay = String(bay);
+
+      btn.addEventListener("click", async () => {
+        setBay(bay);
+
+        // se a área atual não existir para essa bay, troca automaticamente para uma área válida
+        const areas = state.bayAreas.get(bay) || new Set();
+        if (!areas.has(state.area)) {
+          if (areas.has("HOLD")) setArea("HOLD");
+          else if (areas.has("DECK")) setArea("DECK");
+        }
+
+        await loadGrid();
+      });
+
+      wrap.appendChild(btn);
+    }
+
+    // seleciona a primeira bay por padrão
+    setBay(bays[0]);
+
+    // se a área atual não existir nessa bay, ajusta
+    const a0 = state.bayAreas.get(bays[0]) || new Set();
+    if (!a0.has(state.area)) {
+      if (a0.has("HOLD")) setArea("HOLD");
+      else if (a0.has("DECK")) setArea("DECK");
+    }
+
+    setStatus(`Bays carregadas: ${bays.length}. Clique em uma bay para abrir.`);
+  }
+
+  // ------------------
+  // Carrega grid via /baygrid e renderiza
+  // ------------------
+  async function loadGrid() {
+    const worksetId = Number($("worksetId").value);
+    const bay = Number(state.bay);
+    const area = state.area;
+
+    if (!worksetId || !bay || !area) return;
+
+    setStatus(`Abrindo Bay ${bay} (${area})...`);
+
+    const url = `${apiBase()}/baygrid?workset_id=${encodeURIComponent(worksetId)}&bay=${encodeURIComponent(bay)}&area=${encodeURIComponent(area)}`;
+    const data = await httpJson(url);
+
+    $("meta").innerHTML = `
+      <b>Operação</b>: ${state.op} |
+      <b>Bay</b>: ${data.bay} |
+      <b>Área</b>: ${data.area} |
+      <b>Containers</b>: ${data.stats?.containers ?? 0}
+      ${Array.isArray(data.bay_group) ? `| <b>bay_group</b>: [${data.bay_group.join(", ")}]` : ""}
+    `;
+
+    renderTable(data);
+    setStatus(`Bay ${bay} (${area}) carregada. Clique no container para DONE.`);
+  }
+
+  function buildCell(cellData) {
+    const div = document.createElement("div");
+    div.className = "cell";
+
+    if (!cellData) {
+      div.classList.add("empty");
+      return div;
+    }
+
+    const pos = document.createElement("div");
+    pos.className = "pos";
+    // posição calculada pelo que existe hoje (bay/row/tier)
+    pos.textContent = formatPos(cellData.bay, cellData.row, cellData.tier);
+
+    const cn = document.createElement("div");
+    cn.className = "cn";
+    cn.textContent = cellData.container_no || "";
+
+    const iso = document.createElement("div");
+    iso.className = "iso";
+    iso.textContent = cellData.iso_type || "";
+
+    // Ainda não existe no banco (vamos adicionar depois)
+    const od = document.createElement("div");
+    od.className = "od";
+    od.textContent = `OD: —`;
+
+    const wt = document.createElement("div");
+    wt.className = "wt";
+    wt.textContent = `PESO: —`;
+
+    const st = document.createElement("div");
+    st.className = "st";
+    st.textContent = cellData.status || "PENDING";
+
+    div.appendChild(pos);
+    div.appendChild(cn);
+    div.appendChild(iso);
+    div.appendChild(od);
+    div.appendChild(wt);
+    div.appendChild(st);
+
+    if (cellData.status === "DONE") div.classList.add("done");
+
+    return div;
+  }
+
+  function renderTable(data) {
+    const rowsOrder = data.rows_order || [];
+    const tiersOrder = data.tiers_order || [];
+    const grid = data.grid || {};
+
+    const table = $("gridTable");
+    table.innerHTML = "";
+
+    // Header
+    const thead = document.createElement("thead");
+    const hr = document.createElement("tr");
+
+    const th0 = document.createElement("th");
+    th0.className = "left";
+    th0.textContent = "TIER \\ ROW";
+    hr.appendChild(th0);
+
+    for (const r of rowsOrder) {
+      const th = document.createElement("th");
+      th.textContent = String(r).padStart(2, "0");
+      hr.appendChild(th);
+    }
+
+    thead.appendChild(hr);
+    table.appendChild(thead);
+
+    // Body
+    const tbody = document.createElement("tbody");
+
+    for (const t of tiersOrder) {
+      const tr = document.createElement("tr");
+
+      const tdLeft = document.createElement("td");
+      tdLeft.className = "left";
+      tdLeft.textContent = String(t).padStart(2, "0");
+      tr.appendChild(tdLeft);
+
+      for (const r of rowsOrder) {
+        const td = document.createElement("td");
+
+        // IMPORTANTÍSSIMO: grid vem com chaves string
+        const cellData = (grid[String(r)] && grid[String(r)][String(t)]) ? grid[String(r)][String(t)] : null;
+        const cell = buildCell(cellData);
+
+        if (cellData && cellData.container_no) {
+          cell.addEventListener("click", async () => {
+            if (cellData.status === "DONE") return;
+            await markDone(data.workset_id, cellData.container_no);
+            await loadGrid();
           });
-          loadGrid();
-        };
+        }
+
+        td.appendChild(cell);
+        tr.appendChild(td);
       }
-      tr.appendChild(td);
-    });
-    tb.appendChild(tr);
+
+      tbody.appendChild(tr);
+    }
+
+    table.appendChild(tbody);
+  }
+
+  async function markDone(worksetId, containerNo) {
+    try {
+      setStatus(`Marcando DONE: ${containerNo}...`);
+      const url = `${apiBase()}/containers/done`;
+      await httpJson(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workset_id: worksetId, container_no: containerNo })
+      });
+      setStatus(`DONE: ${containerNo}`);
+    } catch (e) {
+      setStatus(`Erro ao marcar DONE: ${e.message}`, true);
+    }
+  }
+
+  async function reloadAll() {
+    try {
+      setStatus("");
+      $("gridTable").innerHTML = "";
+      $("meta").textContent = "";
+
+      await loadBays();
+      await loadGrid();
+    } catch (e) {
+      setStatus(`Erro: ${e.message}`, true);
+    }
+  }
+
+  // Eventos
+  $("btnReload").addEventListener("click", reloadAll);
+
+  $("btnDISCHARGE").addEventListener("click", async () => {
+    setOp("DISCHARGE");
+    await reloadAll();
   });
-  g.appendChild(tb);
-}
 
-// ---------------- CONTROLES ----------------
-btnDISCHARGE.onclick = ()=>{
-  btnDISCHARGE.classList.add("active");
-  btnLOAD.classList.remove("active");
-  state.op = "DISCHARGE";
-  loadBays();
-};
+  $("btnLOAD").addEventListener("click", async () => {
+    setOp("LOAD");
+    await reloadAll();
+  });
 
-btnLOAD.onclick = ()=>{
-  btnLOAD.classList.add("active");
-  btnDISCHARGE.classList.remove("active");
-  state.op = "LOAD";
-  loadBays();
-};
+  $("btnDECK").addEventListener("click", async () => {
+    setArea("DECK");
+    await loadGrid();
+  });
 
-btnDECK.onclick = ()=>{
-  btnDECK.classList.add("active");
-  btnHOLD.classList.remove("active");
-  state.area = "DECK";
-  loadGrid();
-};
+  $("btnHOLD").addEventListener("click", async () => {
+    setArea("HOLD");
+    await loadGrid();
+  });
 
-btnHOLD.onclick = ()=>{
-  btnHOLD.classList.add("active");
-  btnDECK.classList.remove("active");
-  state.area = "HOLD";
-  loadGrid();
-};
-
-// INIT
-loadBays();
+  // init
+  setOp("DISCHARGE");
+  setArea("HOLD");
+  reloadAll();
 </script>
+
 </body>
 </html>
