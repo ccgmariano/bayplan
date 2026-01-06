@@ -1,324 +1,189 @@
-<!-- frontend/index.html -->
 <!doctype html>
 <html lang="pt-BR">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>BayPlan (MVP)</title>
-  <style>
-    :root { font-family: Arial, Helvetica, sans-serif; }
-    body { margin: 0; padding: 12px; background: #f6f7f8; }
-    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; }
-    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    label { font-size: 12px; color: #374151; }
-    input, select, button {
-      height: 36px; border-radius: 8px; border: 1px solid #d1d5db;
-      padding: 0 10px; font-size: 14px; background: #fff;
-    }
-    button { cursor: pointer; }
-    button.primary { background: #111827; color: #fff; border-color: #111827; }
-    button:disabled { opacity: .6; cursor: not-allowed; }
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BayPlan</title>
 
-    .meta { margin-top: 10px; font-size: 12px; color: #374151; }
-    .meta b { color: #111827; }
+<style>
+body{margin:0;padding:12px;font-family:Arial;background:#f6f7f8}
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px}
+h1{margin:0 0 8px 0;font-size:18px}
+.section{margin-top:10px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+button{height:36px;padding:0 14px;border-radius:8px;border:1px solid #d1d5db;background:#fff;cursor:pointer}
+button.active{background:#111827;color:#fff;border-color:#111827}
+button.small{height:32px;font-size:13px}
+.meta{font-size:12px;color:#374151;margin-top:6px}
 
-    .gridWrap { margin-top: 12px; overflow: auto; border-radius: 10px; border: 1px solid #e5e7eb; background: #fff; }
-    table { border-collapse: collapse; width: max-content; min-width: 100%; }
-    th, td { border: 1px solid #e5e7eb; padding: 6px; text-align: center; }
-    th { position: sticky; top: 0; background: #f3f4f6; z-index: 2; }
-    th.left { position: sticky; left: 0; z-index: 3; }
-    td.left { position: sticky; left: 0; background: #f9fafb; z-index: 1; font-weight: 700; }
+.gridWrap{margin-top:12px;overflow:auto;border-radius:10px;border:1px solid #e5e7eb;background:#fff}
+table{border-collapse:collapse;width:max-content;min-width:100%}
+th,td{border:1px solid #e5e7eb;padding:6px;text-align:center}
+th{position:sticky;top:0;background:#f3f4f6}
+th.left,td.left{position:sticky;left:0;background:#f9fafb;font-weight:700}
 
-    .cell {
-      width: 112px; height: 56px; border-radius: 8px; padding: 6px;
-      display: flex; flex-direction: column; justify-content: center; gap: 3px;
-      cursor: pointer; user-select: none;
-      background: #ffffff;
-    }
-    .cell.empty { cursor: default; background: #fafafa; }
-    .cell .cn { font-weight: 800; font-size: 12px; color: #111827; }
-    .cell .iso { font-size: 11px; color: #6b7280; }
-    .cell .st { font-size: 11px; color: #6b7280; }
-
-    .cell.done { background: #e7f7ee; }
-    .cell.done .st { color: #065f46; font-weight: 700; }
-
-    .toolbar { margin-bottom: 10px; }
-    .hint { font-size: 12px; color: #6b7280; margin-top: 6px; }
-    .statusLine { margin-top: 8px; font-size: 12px; color: #111827; }
-    .statusLine.error { color: #b91c1c; }
-  </style>
+.cell{width:112px;height:56px;border-radius:8px;padding:6px;display:flex;flex-direction:column;justify-content:center;cursor:pointer}
+.cell.empty{background:#fafafa;cursor:default}
+.cell.done{background:#e7f7ee}
+.cn{font-weight:800;font-size:12px}
+.iso,.st{font-size:11px;color:#6b7280}
+.st.done{color:#065f46;font-weight:700}
+</style>
 </head>
+
 <body>
-  <div class="card toolbar">
+<div class="card">
+  <h1 id="vessel">BayPlan</h1>
+
+  <!-- OPERAÇÃO -->
+  <div class="section">
     <div class="row">
-      <div>
-        <label>API Base URL</label><br />
-        <input id="apiBase" value="https://bayplan-1.onrender.com" style="width: 280px;" />
-      </div>
-
-      <div>
-        <label>workset_id</label><br />
-        <input id="worksetId" type="number" value="3" style="width: 110px;" />
-      </div>
-
-      <div>
-        <label>Operação</label><br />
-        <select id="opType">
-          <option value="DISCHARGE">DISCHARGE</option>
-          <option value="LOAD">LOAD</option>
-        </select>
-      </div>
-
-      <div>
-        <label>Área</label><br />
-        <select id="area">
-          <option value="DECK">DECK</option>
-          <option value="HOLD">HOLD</option>
-        </select>
-      </div>
-
-      <div>
-        <label>Bay (só com operação)</label><br />
-        <select id="baySelect" style="width: 140px;">
-          <option value="">(carregar...)</option>
-        </select>
-      </div>
-
-      <div style="display:flex; gap:8px; align-items:flex-end;">
-        <button id="btnLoadBays">Carregar Bays</button>
-        <button id="btnLoadGrid" class="primary">Abrir Bay</button>
-      </div>
+      <button id="btnDISCHARGE" class="active">DISCHARGE</button>
+      <button id="btnLOAD">LOAD</button>
     </div>
-
-    <div class="hint">
-      Clique em um container para marcar como <b>DONE</b>. (Por enquanto só existe DONE.)
-    </div>
-
-    <div id="status" class="statusLine"></div>
-    <div id="meta" class="meta"></div>
   </div>
 
-  <div class="gridWrap">
-    <table id="gridTable"></table>
+  <!-- BAYS -->
+  <div class="section">
+    <div class="row" id="bayButtons"></div>
   </div>
+
+  <!-- ÁREA -->
+  <div class="section">
+    <div class="row">
+      <button id="btnDECK">DECK</button>
+      <button id="btnHOLD" class="active">HOLD</button>
+    </div>
+  </div>
+
+  <div class="meta" id="meta"></div>
+</div>
+
+<div class="gridWrap">
+  <table id="grid"></table>
+</div>
 
 <script>
-  const $ = (id) => document.getElementById(id);
+const API = "https://bayplan-1.onrender.com";
+const WORKSET_ID = 3;
 
-  function setStatus(msg, isError=false) {
-    const el = $("status");
-    el.textContent = msg || "";
-    el.className = "statusLine" + (isError ? " error" : "");
-  }
+let state = {
+  op: "DISCHARGE",
+  bay: null,
+  area: "HOLD"
+};
 
-  function api() {
-    return ($("apiBase").value || "").replace(/\/+$/, "");
-  }
+async function apiGet(url){
+  const r = await fetch(url);
+  if(!r.ok) throw new Error(await r.text());
+  return r.json();
+}
 
-  async function httpJson(url, options={}) {
-    const res = await fetch(url, options);
-    const text = await res.text();
-    let data = null;
-    try { data = text ? JSON.parse(text) : null; } catch { /* ignore */ }
-    if (!res.ok) {
-      const msg = (data && (data.error || data.message)) ? (data.error || data.message) : text;
-      throw new Error(msg || `HTTP ${res.status}`);
-    }
-    return data;
-  }
+// ---------------- OPS-BAYS ----------------
+async function loadBays(){
+  const data = await apiGet(`${API}/ops-bays?workset_id=${WORKSET_ID}&operation_type=${state.op}`);
+  const wrap = document.getElementById("bayButtons");
+  wrap.innerHTML = "";
+  state.bay = null;
 
-  async function loadBays() {
-    setStatus("Carregando bays...");
-    const worksetId = Number($("worksetId").value);
-    const opType = $("opType").value;
+  data.items.forEach(it=>{
+    const b = document.createElement("button");
+    b.textContent = `Bay ${it.bay}`;
+    b.className = "small";
+    b.onclick = ()=>{
+      document.querySelectorAll("#bayButtons button").forEach(x=>x.classList.remove("active"));
+      b.classList.add("active");
+      state.bay = it.bay;
+      loadGrid();
+    };
+    wrap.appendChild(b);
+  });
+}
 
-    const url = `${api()}/ops-bays?workset_id=${encodeURIComponent(worksetId)}&operation_type=${encodeURIComponent(opType)}`;
-    const data = await httpJson(url);
+// ---------------- GRID ----------------
+async function loadGrid(){
+  if(!state.bay) return;
+  const d = await apiGet(`${API}/baygrid?workset_id=${WORKSET_ID}&bay=${state.bay}&area=${state.area}`);
+  document.getElementById("meta").innerHTML =
+    `Bay ${d.bay} (${d.area}) — Containers: ${d.stats.containers}`;
 
-    const bays = data.items || [];
-    const baySel = $("baySelect");
-    baySel.innerHTML = "";
+  renderGrid(d);
+}
 
-    if (bays.length === 0) {
-      const opt = document.createElement("option");
-      opt.value = "";
-      opt.textContent = "(nenhuma bay encontrada)";
-      baySel.appendChild(opt);
-      setStatus("Nenhuma bay com operação encontrada para esse workset_id/operação.", true);
-      return;
-    }
+function renderGrid(d){
+  const g = document.getElementById("grid");
+  g.innerHTML = "";
 
-    // Popular com "bay - area"
-    for (const it of bays) {
-      const opt = document.createElement("option");
-      opt.value = String(it.bay);
-      opt.textContent = `Bay ${it.bay} (${it.area})`;
-      opt.dataset.area = it.area;
-      baySel.appendChild(opt);
-    }
+  const thead = document.createElement("thead");
+  const trh = document.createElement("tr");
+  trh.innerHTML = `<th class="left">T\\R</th>` + d.rows_order.map(r=>`<th>${r}</th>`).join("");
+  thead.appendChild(trh);
+  g.appendChild(thead);
 
-    // Se área atual não bater com a primeira opção, sincroniza
-    const first = baySel.options[0];
-    if (first?.dataset?.area) $("area").value = first.dataset.area;
-
-    setStatus(`Bays carregadas: ${bays.length}.`);
-  }
-
-  function buildCell(cellData) {
-    const div = document.createElement("div");
-    div.className = "cell";
-
-    if (!cellData) {
-      div.classList.add("empty");
-      div.innerHTML = "";
-      return div;
-    }
-
-    const cn = document.createElement("div");
-    cn.className = "cn";
-    cn.textContent = cellData.container_no || "";
-
-    const iso = document.createElement("div");
-    iso.className = "iso";
-    iso.textContent = cellData.iso_type || "";
-
-    const st = document.createElement("div");
-    st.className = "st";
-    st.textContent = cellData.status || "PENDING";
-
-    div.appendChild(cn);
-    div.appendChild(iso);
-    div.appendChild(st);
-
-    if (cellData.status === "DONE") div.classList.add("done");
-
-    return div;
-  }
-
-  async function loadGrid() {
-    setStatus("Abrindo bay...");
-    const worksetId = Number($("worksetId").value);
-
-    // Se o usuário selecionar "Bay X (AREA)", sincroniza a área automaticamente
-    const baySel = $("baySelect");
-    const selectedOpt = baySel.options[baySel.selectedIndex];
-    if (selectedOpt?.dataset?.area) $("area").value = selectedOpt.dataset.area;
-
-    const bay = Number(baySel.value);
-    const area = $("area").value;
-
-    if (!worksetId || !bay || !area) {
-      setStatus("Preencha workset_id, bay e área.", true);
-      return;
-    }
-
-    const url = `${api()}/baygrid?workset_id=${encodeURIComponent(worksetId)}&bay=${encodeURIComponent(bay)}&area=${encodeURIComponent(area)}`;
-    const data = await httpJson(url);
-
-    $("meta").innerHTML = `
-      <b>Bay</b>: ${data.bay} | <b>Área</b>: ${data.area} |
-      <b>Containers</b>: ${data.stats?.containers ?? 0} |
-      <b>Rows</b>: max ${data.stats?.max_row ?? "-"} |
-      <b>Tiers</b>: ${data.stats?.min_tier ?? "-"}..${data.stats?.max_tier ?? "-"}
-    `;
-
-    renderTable(data);
-    setStatus("Bay carregada. Clique para marcar DONE.");
-  }
-
-  function renderTable(data) {
-    const rowsOrder = data.rows_order || [];
-    const tiersOrder = data.tiers_order || [];
-    const grid = data.grid || {};
-
-    const table = $("gridTable");
-    table.innerHTML = "";
-
-    // Header
-    const thead = document.createElement("thead");
-    const hr = document.createElement("tr");
-
-    const th0 = document.createElement("th");
-    th0.className = "left";
-    th0.textContent = "TIER \\ ROW";
-    hr.appendChild(th0);
-
-    for (const r of rowsOrder) {
-      const th = document.createElement("th");
-      th.textContent = String(r).padStart(2, "0");
-      hr.appendChild(th);
-    }
-
-    thead.appendChild(hr);
-    table.appendChild(thead);
-
-    // Body: tiers desc (já vem desc)
-    const tbody = document.createElement("tbody");
-
-    for (const t of tiersOrder) {
-      const tr = document.createElement("tr");
-
-      const tdLeft = document.createElement("td");
-      tdLeft.className = "left";
-      tdLeft.textContent = String(t).padStart(2, "0");
-      tr.appendChild(tdLeft);
-
-      for (const r of rowsOrder) {
-        const td = document.createElement("td");
-
-        const cellData = (grid[String(r)] && grid[String(r)][String(t)]) ? grid[String(r)][String(t)] : null;
-        const cell = buildCell(cellData);
-
-        // click -> DONE (somente se tiver container e não estiver DONE)
-        if (cellData && cellData.container_no) {
-          cell.addEventListener("click", async () => {
-            if (cellData.status === "DONE") return;
-            await markDone(data.workset_id, cellData.container_no);
-            await loadGrid(); // refresh
+  const tb = document.createElement("tbody");
+  d.tiers_order.forEach(t=>{
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td class="left">${t}</td>`;
+    d.rows_order.forEach(r=>{
+      const c = d.grid[r]?.[t];
+      const td = document.createElement("td");
+      if(!c){
+        td.innerHTML = `<div class="cell empty"></div>`;
+      } else {
+        td.innerHTML = `
+          <div class="cell ${c.status==="DONE"?"done":""}">
+            <div class="cn">${c.container_no}</div>
+            <div class="iso">${c.iso_type}</div>
+            <div class="st ${c.status==="DONE"?"done":""}">${c.status}</div>
+          </div>`;
+        td.onclick = async ()=>{
+          if(c.status==="DONE") return;
+          await fetch(`${API}/containers/done`,{
+            method:"POST",
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({workset_id:WORKSET_ID,container_no:c.container_no})
           });
-        }
-
-        td.appendChild(cell);
-        tr.appendChild(td);
+          loadGrid();
+        };
       }
-
-      tbody.appendChild(tr);
-    }
-
-    table.appendChild(tbody);
-  }
-
-  async function markDone(worksetId, containerNo) {
-    try {
-      setStatus(`Marcando DONE: ${containerNo}...`);
-      const url = `${api()}/containers/done`;
-      await httpJson(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workset_id: worksetId, container_no: containerNo })
-      });
-      setStatus(`DONE: ${containerNo}`);
-    } catch (e) {
-      setStatus(`Erro ao marcar DONE: ${e.message}`, true);
-    }
-  }
-
-  $("btnLoadBays").addEventListener("click", async () => {
-    try { await loadBays(); }
-    catch (e) { setStatus(`Erro: ${e.message}`, true); }
+      tr.appendChild(td);
+    });
+    tb.appendChild(tr);
   });
+  g.appendChild(tb);
+}
 
-  $("btnLoadGrid").addEventListener("click", async () => {
-    try { await loadGrid(); }
-    catch (e) { setStatus(`Erro: ${e.message}`, true); }
-  });
+// ---------------- CONTROLES ----------------
+btnDISCHARGE.onclick = ()=>{
+  btnDISCHARGE.classList.add("active");
+  btnLOAD.classList.remove("active");
+  state.op = "DISCHARGE";
+  loadBays();
+};
 
-  // Auto: carrega bays ao abrir
-  (async () => {
-    try { await loadBays(); }
-    catch (e) { setStatus(`Erro: ${e.message}`, true); }
-  })();
+btnLOAD.onclick = ()=>{
+  btnLOAD.classList.add("active");
+  btnDISCHARGE.classList.remove("active");
+  state.op = "LOAD";
+  loadBays();
+};
+
+btnDECK.onclick = ()=>{
+  btnDECK.classList.add("active");
+  btnHOLD.classList.remove("active");
+  state.area = "DECK";
+  loadGrid();
+};
+
+btnHOLD.onclick = ()=>{
+  btnHOLD.classList.add("active");
+  btnDECK.classList.remove("active");
+  state.area = "HOLD";
+  loadGrid();
+};
+
+// INIT
+loadBays();
 </script>
 </body>
 </html>
