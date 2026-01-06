@@ -42,6 +42,29 @@ app.get("/db-health", async (req, res) => {
   }
 });
 
+// -------------------
+// BAY HELPERS (NOVO)
+// -------------------
+
+// Bay group para buscar containers físicos que aparecem no PDF do bay "operacional"
+function getBayGroup(inputBay) {
+  const b = Number(inputBay);
+  if (!Number.isInteger(b) || b <= 0) return [];
+
+  // Ímpar (bay 20'): PDF do bay ímpar também mostra 40' (bay par adjacente)
+  if (b % 2 === 1) return [b, b + 1];
+
+  // Par (bay 40'): inclui as duas ímpares adjacentes + ela mesma
+  return [b - 1, b, b + 1].filter(x => x > 0);
+}
+
+// Normaliza bay para "bay operacional" (ímpar) para o dropdown
+function normalizeDisplayBay(inputBay) {
+  const b = Number(inputBay);
+  if (!Number.isInteger(b) || b <= 0) return null;
+  return (b % 2 === 0) ? (b - 1) : b;
+}
+
 // VOYAGES
 app.post("/voyages", async (req, res) => {
   const { vessel_name, voyage_code } = req.body;
@@ -147,6 +170,9 @@ function parseBaplieMinimal(ediText) {
     if (current && s.startsWith("LOC+147+")) {
       const posPart = s.split("+")[2] || "";
       const pos = posPart.split(":")[0] || "";
+
+      // BAPLIE costuma vir com bay 3 dígitos (ex: 0440914). PDF às vezes mostra 440914 sem zero.
+      // Aqui mantemos o padrão bay 3 dígitos do EDI.
       if (pos.length >= 7) {
         const bay = parseInt(pos.slice(0, 3), 10);
         const row = parseInt(pos.slice(3, 5), 10);
@@ -177,7 +203,7 @@ app.post("/import/edi", upload.single("file"), async (req, res) => {
     }
 
     const ediText = req.file.buffer.toString("utf8");
-    detectMessageType(ediText); // mantém para futuro (auditoria), mas não precisamos retornar aqui
+    detectMessageType(ediText);
 
     const v = await pool.query(
       "insert into voyages (vessel_name, voyage_code) values ($1,$2) returning *",
@@ -261,7 +287,7 @@ function buildTierOrder(minTier, maxTier) {
   return tiers;
 }
 
-// --------- OPS-BAYS ----------
+// --------- OPS-BAYS (AJUSTADO) ----------
 app.get("/ops-bays", async (req, res) => {
   const { workset_id, operation_type } = req.query;
   if (!workset_id || !operation_type) {
@@ -280,20 +306,45 @@ app.get("/ops-bays", async (req, res) => {
     [workset_id, operation_type]
   );
 
-  res.json({ workset_id: Number(workset_id), operation_type, items: r.rows });
+  // Normaliza para bay operacional (ímpar):
+  // - se operação só existe em bay par (40'), o dropdown ainda deve exibir a bay ímpar correspondente
+  const map = new Map(); // key: displayBay|area -> { bay, area }
+  for (const it of r.rows) {
+    const displayBay = normalizeDisplayBay(it.bay);
+    if (displayBay == null) continue;
+    const key = `${displayBay}|${it.area}`;
+    if (!map.has(key)) map.set(key, { bay: displayBay, area: it.area });
+  }
+
+  const items = Array.from(map.values()).sort((a, b) => {
+    if (a.bay !== b.bay) return a.bay - b.bay;
+    return String(a.area).localeCompare(String(b.area));
+  });
+
+  res.json({ workset_id: Number(workset_id), operation_type, items });
 });
 
-// --------- BAYGRID ----------
+// --------- BAYGRID (AJUSTADO) ----------
 app.get("/baygrid", async (req, res) => {
   const { workset_id, bay, area } = req.query;
   if (!workset_id || !bay || !area) return res.status(400).json({ error: "workset_id, bay and area are required" });
   if (!["DECK", "HOLD"].includes(area)) return res.status(400).json({ error: "area must be DECK or HOLD" });
 
+  const bayNum = Number(bay);
+  if (!Number.isInteger(bayNum) || bayNum <= 0) return res.status(400).json({ error: "bay must be a positive integer" });
+
+  const bay_group = getBayGroup(bayNum);
+  if (bay_group.length === 0) return res.status(400).json({ error: "invalid bay" });
+
+  // REGRA-CHAVE:
+  // Bay operacional (ex.: 43) deve incluir também bay par (44) para containers 40'
   const r = await pool.query(
-    `select container_no, iso_type, row, tier, status, done_at
+    `select container_no, iso_type, row, tier, status, done_at, bay
      from containers
-     where workset_id = $1 and bay = $2 and area = $3`,
-    [workset_id, bay, area]
+     where workset_id = $1
+       and bay = any($2::int[])
+       and area = $3`,
+    [workset_id, bay_group, area]
   );
 
   let maxRow = 0;
@@ -319,13 +370,15 @@ app.get("/baygrid", async (req, res) => {
       container_no: c.container_no,
       iso_type: c.iso_type,
       status: c.status,
-      done_at: c.done_at
+      done_at: c.done_at,
+      bay: c.bay // útil para debug (43 vs 44)
     };
   }
 
   res.json({
     workset_id: Number(workset_id),
-    bay: Number(bay),
+    bay: bayNum,
+    bay_group, // <- NOVO: para validar com o PDF (ex.: [43,44])
     area,
     stats: {
       containers: r.rows.length,
