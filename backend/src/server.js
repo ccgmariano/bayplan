@@ -253,7 +253,7 @@ app.post("/import/edi", upload.single("file"), async (req, res) => {
   }
 });
 
-// --------- BAYVIEW (dados p/ UI) ----------
+// --------- BAYVIEW (lista “crua”, útil p/ debug) ----------
 app.get("/bayview", async (req, res) => {
   const { workset_id, bay, area } = req.query;
   if (!workset_id || !bay || !area) {
@@ -264,15 +264,7 @@ app.get("/bayview", async (req, res) => {
   }
 
   const r = await pool.query(
-    `select
-       container_no,
-       iso_type,
-       bay,
-       row,
-       tier,
-       area,
-       status,
-       done_at
+    `select container_no, iso_type, bay, row, tier, area, status, done_at
      from containers
      where workset_id = $1 and bay = $2 and area = $3
      order by tier desc nulls last, row asc nulls last, container_no asc`,
@@ -285,6 +277,118 @@ app.get("/bayview", async (req, res) => {
     area,
     count: r.rows.length,
     containers: r.rows
+  });
+});
+
+// --------- Layout Engine derivado do EDI ----------
+function buildRowOrder(maxRow) {
+  // regra que você definiu:
+  // par (10): 10 08 06 04 02 01 03 05 07 09
+  // ímpar: adiciona 00 no meio
+  const evens = [];
+  for (let r = maxRow; r >= 2; r--) if (r % 2 === 0) evens.push(r);
+
+  const odds = [];
+  for (let r = 1; r <= maxRow; r++) if (r % 2 === 1) odds.push(r);
+
+  const has00 = (maxRow % 2 === 1);
+  return has00 ? [...evens, 0, ...odds] : [...evens, ...odds];
+}
+
+function buildTierOrder(minTier, maxTier) {
+  // tiers pares; devolve ordem decrescente (igual ao papel)
+  if (!Number.isFinite(minTier) || !Number.isFinite(maxTier)) return [];
+  const start = (maxTier % 2 === 0) ? maxTier : maxTier - 1;
+  const end = (minTier % 2 === 0) ? minTier : minTier + 1;
+
+  const tiers = [];
+  for (let t = start; t >= end; t -= 2) tiers.push(t);
+  return tiers;
+}
+
+// --------- OPS-BAYS (seletor que pula só nas bays com operação) ----------
+app.get("/ops-bays", async (req, res) => {
+  const { workset_id, operation_type } = req.query;
+  if (!workset_id || !operation_type) {
+    return res.status(400).json({ error: "workset_id and operation_type are required" });
+  }
+  if (!["LOAD", "DISCHARGE"].includes(operation_type)) {
+    return res.status(400).json({ error: "operation_type must be LOAD or DISCHARGE" });
+  }
+
+  const r = await pool.query(
+    `select bay, area
+     from operations
+     where workset_id = $1 and operation_type = $2
+     group by bay, area
+     order by bay asc, area asc`,
+    [workset_id, operation_type]
+  );
+
+  res.json({ workset_id: Number(workset_id), operation_type, items: r.rows });
+});
+
+// --------- BAYGRID (formato pronto para desenhar igual ao PDF) ----------
+app.get("/baygrid", async (req, res) => {
+  const { workset_id, bay, area } = req.query;
+  if (!workset_id || !bay || !area) {
+    return res.status(400).json({ error: "workset_id, bay and area are required" });
+  }
+  if (!["DECK", "HOLD"].includes(area)) {
+    return res.status(400).json({ error: "area must be DECK or HOLD" });
+  }
+
+  // pega os containers daquela bay/área
+  const r = await pool.query(
+    `select container_no, iso_type, row, tier, status, done_at
+     from containers
+     where workset_id = $1 and bay = $2 and area = $3`,
+    [workset_id, bay, area]
+  );
+
+  // deriva limites reais (do próprio EDI importado)
+  let maxRow = 0;
+  let minTier = Infinity;
+  let maxTier = -Infinity;
+
+  for (const c of r.rows) {
+    if (Number.isFinite(c.row) && c.row > maxRow) maxRow = c.row;
+    if (Number.isFinite(c.tier) && c.tier < minTier) minTier = c.tier;
+    if (Number.isFinite(c.tier) && c.tier > maxTier) maxTier = c.tier;
+  }
+
+  const rows_order = buildRowOrder(maxRow);
+  const tiers_order = buildTierOrder(minTier === Infinity ? NaN : minTier, maxTier);
+
+  // monta mapa row->tier->container
+  const grid = {}; // { "16": { "88": {...} } }
+  for (const row of rows_order) grid[String(row)] = {};
+
+  for (const c of r.rows) {
+    const rr = String(c.row);
+    const tt = String(c.tier);
+    if (!grid[rr]) grid[rr] = {};
+    grid[rr][tt] = {
+      container_no: c.container_no,
+      iso_type: c.iso_type,
+      status: c.status,
+      done_at: c.done_at
+    };
+  }
+
+  res.json({
+    workset_id: Number(workset_id),
+    bay: Number(bay),
+    area,
+    stats: {
+      containers: r.rows.length,
+      max_row: maxRow,
+      min_tier: minTier === Infinity ? null : minTier,
+      max_tier: maxTier === -Infinity ? null : maxTier
+    },
+    rows_order,
+    tiers_order,
+    grid
   });
 });
 
