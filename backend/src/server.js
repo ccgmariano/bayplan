@@ -8,7 +8,9 @@ import multer from "multer";
 const app = express();
 app.use(express.json());
 
+// --------------------
 // CORS
+// --------------------
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
@@ -17,7 +19,9 @@ app.use((req, res, next) => {
   next();
 });
 
-// helpers
+// --------------------
+// Helpers base
+// --------------------
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -32,393 +36,236 @@ async function initDb() {
   console.log("DB initialized");
 }
 
-app.get("/health", (req, res) => res.status(200).send("OK"));
-app.get("/db-health", async (req, res) => {
+// --------------------
+// Health
+// --------------------
+app.get("/health", (_, res) => res.send("OK"));
+app.get("/db-health", async (_, res) => {
   try {
-    const r = await pool.query("select 1 as ok");
-    res.status(200).json({ ok: true, db: r.rows[0].ok });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: String(err?.message || err) });
+    await pool.query("select 1");
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
   }
 });
 
-// -------------------
-// BAY HELPERS (NOVO)
-// -------------------
-
-// Bay group para buscar containers físicos que aparecem no PDF do bay "operacional"
-function getBayGroup(inputBay) {
-  const b = Number(inputBay);
+// --------------------
+// BAY RULES (CORE)
+// --------------------
+function getBayGroup(bay) {
+  const b = Number(bay);
   if (!Number.isInteger(b) || b <= 0) return [];
 
-  // Ímpar (bay 20'): PDF do bay ímpar também mostra 40' (bay par adjacente)
+  // Ímpar → 20’ + 40’ adjacente
   if (b % 2 === 1) return [b, b + 1];
 
-  // Par (bay 40'): inclui as duas ímpares adjacentes + ela mesma
+  // Par → 40’ (centro) + ímpares adjacentes
   return [b - 1, b, b + 1].filter(x => x > 0);
 }
 
-// Normaliza bay para "bay operacional" (ímpar) para o dropdown
-function normalizeDisplayBay(inputBay) {
-  const b = Number(inputBay);
+function normalizeDisplayBay(bay) {
+  const b = Number(bay);
   if (!Number.isInteger(b) || b <= 0) return null;
-  return (b % 2 === 0) ? (b - 1) : b;
+  return b % 2 === 0 ? b - 1 : b;
 }
 
-// VOYAGES
+// --------------------
+// VOYAGES / WORKSETS
+// --------------------
 app.post("/voyages", async (req, res) => {
   const { vessel_name, voyage_code } = req.body;
-  if (!vessel_name || !voyage_code) return res.status(400).json({ error: "vessel_name and voyage_code are required" });
   const r = await pool.query(
     "insert into voyages (vessel_name, voyage_code) values ($1,$2) returning *",
     [vessel_name, voyage_code]
   );
-  res.status(201).json(r.rows[0]);
-});
-app.get("/voyages", async (_, res) => {
-  const r = await pool.query("select * from voyages order by created_at desc");
-  res.json(r.rows);
+  res.json(r.rows[0]);
 });
 
-// WORKSETS
 app.post("/worksets", async (req, res) => {
-  const { voyage_id, type } = req.body;
-  if (!voyage_id || !type) return res.status(400).json({ error: "voyage_id and type are required" });
-  if (!["OPERATION", "PARALISATION"].includes(type)) return res.status(400).json({ error: "type must be OPERATION or PARALISATION" });
+  const { voyage_id } = req.body;
   const r = await pool.query(
-    "insert into worksets (voyage_id, type) values ($1,$2) returning *",
-    [voyage_id, type]
+    "insert into worksets (voyage_id, type) values ($1,'OPERATION') returning *",
+    [voyage_id]
   );
-  res.status(201).json(r.rows[0]);
-});
-app.get("/worksets", async (req, res) => {
-  const { voyage_id } = req.query;
-  if (!voyage_id) return res.status(400).json({ error: "voyage_id is required" });
-  const r = await pool.query("select * from worksets where voyage_id = $1 order by created_at desc", [voyage_id]);
-  res.json(r.rows);
+  res.json(r.rows[0]);
 });
 
-// OPERATIONS
-app.post("/operations", async (req, res) => {
-  const { workset_id, operation_type, bay, area } = req.body;
-  if (!workset_id || !operation_type || !bay || !area) {
-    return res.status(400).json({ error: "workset_id, operation_type, bay and area are required" });
-  }
-  if (!["LOAD", "DISCHARGE"].includes(operation_type)) return res.status(400).json({ error: "operation_type must be LOAD or DISCHARGE" });
-  if (!["DECK", "HOLD"].includes(area)) return res.status(400).json({ error: "area must be DECK or HOLD" });
-  const r = await pool.query(
-    "insert into operations (workset_id, operation_type, bay, area) values ($1,$2,$3,$4) returning *",
-    [workset_id, operation_type, bay, area]
-  );
-  res.status(201).json(r.rows[0]);
-});
-app.get("/operations", async (req, res) => {
-  const { workset_id } = req.query;
-  if (!workset_id) return res.status(400).json({ error: "workset_id is required" });
-  const r = await pool.query("select * from operations where workset_id = $1 order by created_at desc", [workset_id]);
-  res.json(r.rows);
-});
-
-// PARALISATIONS
-app.post("/paralisations", async (req, res) => {
-  const { workset_id, started_at, ended_at, reason, notes } = req.body;
-  if (!workset_id || !started_at || !reason) {
-    return res.status(400).json({ error: "workset_id, started_at and reason are required" });
-  }
-  const r = await pool.query(
-    `insert into paralisations (workset_id, started_at, ended_at, reason, notes)
-     values ($1,$2,$3,$4,$5) returning *`,
-    [workset_id, started_at, ended_at || null, reason, notes || null]
-  );
-  res.status(201).json(r.rows[0]);
-});
-app.get("/paralisations", async (req, res) => {
-  const { workset_id } = req.query;
-  if (!workset_id) return res.status(400).json({ error: "workset_id is required" });
-  const r = await pool.query("select * from paralisations where workset_id = $1 order by started_at desc", [workset_id]);
-  res.json(r.rows);
-});
-
-// --------- IMPORTADOR EDI ----------
+// --------------------
+// IMPORTADOR EDI
+// --------------------
 const upload = multer({ storage: multer.memoryStorage() });
 
-function detectMessageType(ediText) {
-  const flat = ediText.replace(/\n/g, "");
-  const segs = flat.split("'");
-  return segs.find(s => s.startsWith("UNH+")) || null;
-}
-
 function parseBaplieMinimal(ediText) {
-  const flat = ediText.replace(/\n/g, "");
-  const segs = flat.split("'").filter(Boolean);
-
+  const segs = ediText.replace(/\n/g, "").split("'").filter(Boolean);
   const units = [];
-  let current = null;
+  let cur = null;
 
   for (const s of segs) {
     if (s.startsWith("EQD+CN+")) {
-      if (current) units.push(current);
-
-      const parts = s.split("+");
-      const containerNo = parts[2] || null;
-      const isoType = parts[3] || null;
-
-      current = { container_no: containerNo, iso_type: isoType, bay: null, row: null, tier: null, raw_pos: null };
-      continue;
+      if (cur) units.push(cur);
+      const p = s.split("+");
+      cur = { container_no: p[2], iso_type: p[3], bay: null, row: null, tier: null };
     }
-
-    if (current && s.startsWith("LOC+147+")) {
-      const posPart = s.split("+")[2] || "";
-      const pos = posPart.split(":")[0] || "";
-
-      // BAPLIE costuma vir com bay 3 dígitos (ex: 0440914). PDF às vezes mostra 440914 sem zero.
-      // Aqui mantemos o padrão bay 3 dígitos do EDI.
+    if (cur && s.startsWith("LOC+147+")) {
+      const pos = (s.split("+")[2] || "").split(":")[0];
       if (pos.length >= 7) {
-        const bay = parseInt(pos.slice(0, 3), 10);
-        const row = parseInt(pos.slice(3, 5), 10);
-        const tier = parseInt(pos.slice(5, 7), 10);
-        current.bay = Number.isFinite(bay) ? bay : null;
-        current.row = Number.isFinite(row) ? row : null;
-        current.tier = Number.isFinite(tier) ? tier : null;
-        current.raw_pos = pos;
+        cur.bay = parseInt(pos.slice(0, 3), 10);
+        cur.row = parseInt(pos.slice(3, 5), 10);
+        cur.tier = parseInt(pos.slice(5, 7), 10);
       }
-      continue;
     }
   }
-  if (current) units.push(current);
+  if (cur) units.push(cur);
   return units.filter(u => u.container_no);
 }
 
 app.post("/import/edi", upload.single("file"), async (req, res) => {
-  try {
-    const { vessel_name, voyage_code, operation_type } = req.body;
-    if (!vessel_name || !voyage_code || !operation_type) {
-      return res.status(400).json({ error: "vessel_name, voyage_code and operation_type (LOAD|DISCHARGE) are required" });
-    }
-    if (!["LOAD", "DISCHARGE"].includes(operation_type)) {
-      return res.status(400).json({ error: "operation_type must be LOAD or DISCHARGE" });
-    }
-    if (!req.file?.buffer) {
-      return res.status(400).json({ error: "file is required (multipart field name: file)" });
-    }
+  const { vessel_name, voyage_code, operation_type } = req.body;
+  const ediText = req.file.buffer.toString("utf8");
 
-    const ediText = req.file.buffer.toString("utf8");
-    detectMessageType(ediText);
+  const v = await pool.query(
+    "insert into voyages (vessel_name, voyage_code) values ($1,$2) returning *",
+    [vessel_name, voyage_code]
+  );
+  const voyage = v.rows[0];
 
-    const v = await pool.query(
-      "insert into voyages (vessel_name, voyage_code) values ($1,$2) returning *",
-      [vessel_name, voyage_code]
+  const w = await pool.query(
+    "insert into worksets (voyage_id, type) values ($1,'OPERATION') returning *",
+    [voyage.id]
+  );
+  const workset = w.rows[0];
+
+  const units = parseBaplieMinimal(ediText);
+  const bayArea = new Set();
+
+  for (const u of units) {
+    const area = u.tier >= 80 ? "DECK" : "HOLD";
+    bayArea.add(`${u.bay}|${area}`);
+
+    await pool.query(
+      `insert into containers (workset_id, container_no, iso_type, bay, row, tier, area)
+       values ($1,$2,$3,$4,$5,$6,$7)
+       on conflict (workset_id, container_no) do update
+       set bay=excluded.bay,row=excluded.row,tier=excluded.tier,area=excluded.area`,
+      [workset.id, u.container_no, u.iso_type, u.bay, u.row, u.tier, area]
     );
-    const voyage = v.rows[0];
-
-    const w = await pool.query(
-      "insert into worksets (voyage_id, type) values ($1,'OPERATION') returning *",
-      [voyage.id]
-    );
-    const workset = w.rows[0];
-
-    const units = parseBaplieMinimal(ediText);
-
-    const bayAreaSet = new Set();
-    let containersInserted = 0;
-
-    for (const u of units) {
-      const tier = u.tier;
-      const area = (typeof tier === "number" && tier >= 80) ? "DECK" : "HOLD";
-      if (typeof u.bay === "number") bayAreaSet.add(`${u.bay}|${area}`);
-
-      const c = await pool.query(
-        `insert into containers (workset_id, container_no, iso_type, bay, row, tier, area)
-         values ($1,$2,$3,$4,$5,$6,$7)
-         on conflict (workset_id, container_no) do update
-           set iso_type = excluded.iso_type,
-               bay = excluded.bay,
-               row = excluded.row,
-               tier = excluded.tier,
-               area = excluded.area
-         returning id`,
-        [workset.id, u.container_no, u.iso_type, u.bay, u.row, u.tier, area]
-      );
-      if (c.rowCount) containersInserted += 1;
-    }
-
-    for (const key of bayAreaSet) {
-      const [bayStr, area] = key.split("|");
-      const bay = parseInt(bayStr, 10);
-      await pool.query(
-        "insert into operations (workset_id, operation_type, bay, area) values ($1,$2,$3,$4)",
-        [workset.id, operation_type, bay, area]
-      );
-    }
-
-    return res.status(201).json({
-      ok: true,
-      voyage_id: voyage.id,
-      workset_id: workset.id,
-      containers_parsed: units.length,
-      containers_saved: containersInserted,
-      bays_with_ops: bayAreaSet.size
-    });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ ok: false, error: String(err?.message || err) });
   }
+
+  for (const k of bayArea) {
+    const [bay, area] = k.split("|");
+    await pool.query(
+      "insert into operations (workset_id, operation_type, bay, area) values ($1,$2,$3,$4)",
+      [workset.id, operation_type, bay, area]
+    );
+  }
+
+  res.json({ workset_id: workset.id, containers: units.length });
 });
 
-// --------- Layout helpers ----------
-function buildRowOrder(maxRow) {
-  const evens = [];
-  for (let r = maxRow; r >= 2; r--) if (r % 2 === 0) evens.push(r);
-
-  const odds = [];
-  for (let r = 1; r <= maxRow; r++) if (r % 2 === 1) odds.push(r);
-
-  const has00 = (maxRow % 2 === 1);
-  return has00 ? [...evens, 0, ...odds] : [...evens, ...odds];
-}
-
-function buildTierOrder(minTier, maxTier) {
-  if (!Number.isFinite(minTier) || !Number.isFinite(maxTier)) return [];
-  const start = (maxTier % 2 === 0) ? maxTier : maxTier - 1;
-  const end = (minTier % 2 === 0) ? minTier : minTier + 1;
-
-  const tiers = [];
-  for (let t = start; t >= end; t -= 2) tiers.push(t);
-  return tiers;
-}
-
-// --------- OPS-BAYS (AJUSTADO) ----------
+// --------------------
+// OPS-BAYS
+// --------------------
 app.get("/ops-bays", async (req, res) => {
   const { workset_id, operation_type } = req.query;
-  if (!workset_id || !operation_type) {
-    return res.status(400).json({ error: "workset_id and operation_type are required" });
-  }
-  if (!["LOAD", "DISCHARGE"].includes(operation_type)) {
-    return res.status(400).json({ error: "operation_type must be LOAD or DISCHARGE" });
-  }
 
   const r = await pool.query(
-    `select bay, area
-     from operations
-     where workset_id = $1 and operation_type = $2
-     group by bay, area
-     order by bay asc, area asc`,
+    `select bay, area from operations
+     where workset_id=$1 and operation_type=$2`,
     [workset_id, operation_type]
   );
 
-  // Normaliza para bay operacional (ímpar):
-  // - se operação só existe em bay par (40'), o dropdown ainda deve exibir a bay ímpar correspondente
-  const map = new Map(); // key: displayBay|area -> { bay, area }
+  const map = new Map();
   for (const it of r.rows) {
-    const displayBay = normalizeDisplayBay(it.bay);
-    if (displayBay == null) continue;
-    const key = `${displayBay}|${it.area}`;
-    if (!map.has(key)) map.set(key, { bay: displayBay, area: it.area });
+    const b = normalizeDisplayBay(it.bay);
+    if (b !== null) map.set(`${b}|${it.area}`, { bay: b, area: it.area });
   }
 
-  const items = Array.from(map.values()).sort((a, b) => {
-    if (a.bay !== b.bay) return a.bay - b.bay;
-    return String(a.area).localeCompare(String(b.area));
-  });
-
-  res.json({ workset_id: Number(workset_id), operation_type, items });
+  res.json({ items: [...map.values()] });
 });
 
-// --------- BAYGRID (AJUSTADO) ----------
+// --------------------
+// BAYGRID
+// --------------------
 app.get("/baygrid", async (req, res) => {
   const { workset_id, bay, area } = req.query;
-  if (!workset_id || !bay || !area) return res.status(400).json({ error: "workset_id, bay and area are required" });
-  if (!["DECK", "HOLD"].includes(area)) return res.status(400).json({ error: "area must be DECK or HOLD" });
+  const bay_group = getBayGroup(bay);
 
-  const bayNum = Number(bay);
-  if (!Number.isInteger(bayNum) || bayNum <= 0) return res.status(400).json({ error: "bay must be a positive integer" });
-
-  const bay_group = getBayGroup(bayNum);
-  if (bay_group.length === 0) return res.status(400).json({ error: "invalid bay" });
-
-  // REGRA-CHAVE:
-  // Bay operacional (ex.: 43) deve incluir também bay par (44) para containers 40'
   const r = await pool.query(
-    `select container_no, iso_type, row, tier, status, done_at, bay
+    `select container_no, iso_type, bay, row, tier, status
      from containers
-     where workset_id = $1
-       and bay = any($2::int[])
-       and area = $3`,
+     where workset_id=$1 and bay=any($2::int[]) and area=$3`,
     [workset_id, bay_group, area]
   );
 
-  let maxRow = 0;
-  let minTier = Infinity;
-  let maxTier = -Infinity;
+  let maxRow = 0, minTier = 999, maxTier = 0;
+  r.rows.forEach(c => {
+    if (c.row > maxRow) maxRow = c.row;
+    if (c.tier < minTier) minTier = c.tier;
+    if (c.tier > maxTier) maxTier = c.tier;
+  });
 
-  for (const c of r.rows) {
-    if (Number.isFinite(c.row) && c.row > maxRow) maxRow = c.row;
-    if (Number.isFinite(c.tier) && c.tier < minTier) minTier = c.tier;
-    if (Number.isFinite(c.tier) && c.tier > maxTier) maxTier = c.tier;
-  }
+  const rows_order = [...Array(maxRow).keys()].map(i => i + 1)
+    .filter(r => r % 2 === 0).reverse()
+    .concat([...Array(maxRow).keys()].map(i => i + 1).filter(r => r % 2 === 1));
 
-  const rows_order = buildRowOrder(maxRow);
-  const tiers_order = buildTierOrder(minTier === Infinity ? NaN : minTier, maxTier);
+  const tiers_order = [];
+  for (let t = maxTier; t >= minTier; t -= 2) tiers_order.push(t);
 
   const grid = {};
-  for (const row of rows_order) grid[String(row)] = {};
-  for (const c of r.rows) {
-    const rr = String(c.row);
-    const tt = String(c.tier);
-    if (!grid[rr]) grid[rr] = {};
-    grid[rr][tt] = {
-      container_no: c.container_no,
-      iso_type: c.iso_type,
-      status: c.status,
-      done_at: c.done_at,
-      bay: c.bay // útil para debug (43 vs 44)
-    };
-  }
-
-  res.json({
-    workset_id: Number(workset_id),
-    bay: bayNum,
-    bay_group, // <- NOVO: para validar com o PDF (ex.: [43,44])
-    area,
-    stats: {
-      containers: r.rows.length,
-      max_row: maxRow,
-      min_tier: minTier === Infinity ? null : minTier,
-      max_tier: maxTier === -Infinity ? null : maxTier
-    },
-    rows_order,
-    tiers_order,
-    grid
+  rows_order.forEach(r => grid[r] = {});
+  r.rows.forEach(c => {
+    grid[c.row][c.tier] = c;
   });
+
+  res.json({ bay, bay_group, rows_order, tiers_order, grid });
 });
 
-// --------- DONE (por enquanto só DONE) ----------
+// --------------------
+// DONE
+// --------------------
 app.post("/containers/done", async (req, res) => {
   const { workset_id, container_no } = req.body;
-  if (!workset_id || !container_no) {
-    return res.status(400).json({ error: "workset_id and container_no are required" });
-  }
-
   const r = await pool.query(
-    `update containers
-     set status = 'DONE', done_at = now()
-     where workset_id = $1 and container_no = $2
-     returning workset_id, container_no, status, done_at, bay, row, tier, area`,
+    `update containers set status='DONE', done_at=now()
+     where workset_id=$1 and container_no=$2 returning *`,
     [workset_id, container_no]
   );
-
-  if (r.rowCount === 0) {
-    return res.status(404).json({ error: "container not found for this workset_id" });
-  }
-
-  res.json({ ok: true, container: r.rows[0] });
+  res.json(r.rows[0]);
 });
 
-const PORT = Number(process.env.PORT) || 3000;
+// --------------------
+// ADMIN IMPORT UI
+// --------------------
+app.get("/admin/import", (_, res) => {
+  res.send(`
+<!doctype html>
+<html><body>
+<h2>Importar EDI</h2>
+<form id="f">
+<input name="vessel_name" value="APL NEW JERSEY"><br>
+<input name="voyage_code" value="1GB1AN1MA"><br>
+<select name="operation_type">
+<option>DISCHARGE</option>
+<option>LOAD</option>
+</select><br>
+<input type="file" name="file"><br>
+<button>Importar</button>
+</form>
+<pre id="o"></pre>
+<script>
+f.onsubmit=async e=>{
+e.preventDefault();
+const fd=new FormData(f);
+const r=await fetch('/import/edi',{method:'POST',body:fd});
+o.textContent=await r.text();
+}
+</script>
+</body></html>
+  `);
+});
 
-initDb()
-  .then(() => app.listen(PORT, () => console.log(`Server listening on port ${PORT}`)))
-  .catch(err => {
-    console.error("DB init failed:", err);
-    process.exit(1);
-  });
+// --------------------
+const PORT = process.env.PORT || 3000;
+initDb().then(() =>
+  app.listen(PORT, () => console.log("Server on", PORT))
+);
