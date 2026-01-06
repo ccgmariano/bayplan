@@ -1,0 +1,324 @@
+<!-- frontend/index.html -->
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BayPlan (MVP)</title>
+  <style>
+    :root { font-family: Arial, Helvetica, sans-serif; }
+    body { margin: 0; padding: 12px; background: #f6f7f8; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    label { font-size: 12px; color: #374151; }
+    input, select, button {
+      height: 36px; border-radius: 8px; border: 1px solid #d1d5db;
+      padding: 0 10px; font-size: 14px; background: #fff;
+    }
+    button { cursor: pointer; }
+    button.primary { background: #111827; color: #fff; border-color: #111827; }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+
+    .meta { margin-top: 10px; font-size: 12px; color: #374151; }
+    .meta b { color: #111827; }
+
+    .gridWrap { margin-top: 12px; overflow: auto; border-radius: 10px; border: 1px solid #e5e7eb; background: #fff; }
+    table { border-collapse: collapse; width: max-content; min-width: 100%; }
+    th, td { border: 1px solid #e5e7eb; padding: 6px; text-align: center; }
+    th { position: sticky; top: 0; background: #f3f4f6; z-index: 2; }
+    th.left { position: sticky; left: 0; z-index: 3; }
+    td.left { position: sticky; left: 0; background: #f9fafb; z-index: 1; font-weight: 700; }
+
+    .cell {
+      width: 112px; height: 56px; border-radius: 8px; padding: 6px;
+      display: flex; flex-direction: column; justify-content: center; gap: 3px;
+      cursor: pointer; user-select: none;
+      background: #ffffff;
+    }
+    .cell.empty { cursor: default; background: #fafafa; }
+    .cell .cn { font-weight: 800; font-size: 12px; color: #111827; }
+    .cell .iso { font-size: 11px; color: #6b7280; }
+    .cell .st { font-size: 11px; color: #6b7280; }
+
+    .cell.done { background: #e7f7ee; }
+    .cell.done .st { color: #065f46; font-weight: 700; }
+
+    .toolbar { margin-bottom: 10px; }
+    .hint { font-size: 12px; color: #6b7280; margin-top: 6px; }
+    .statusLine { margin-top: 8px; font-size: 12px; color: #111827; }
+    .statusLine.error { color: #b91c1c; }
+  </style>
+</head>
+<body>
+  <div class="card toolbar">
+    <div class="row">
+      <div>
+        <label>API Base URL</label><br />
+        <input id="apiBase" value="https://bayplan-1.onrender.com" style="width: 280px;" />
+      </div>
+
+      <div>
+        <label>workset_id</label><br />
+        <input id="worksetId" type="number" value="3" style="width: 110px;" />
+      </div>
+
+      <div>
+        <label>Operação</label><br />
+        <select id="opType">
+          <option value="DISCHARGE">DISCHARGE</option>
+          <option value="LOAD">LOAD</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Área</label><br />
+        <select id="area">
+          <option value="DECK">DECK</option>
+          <option value="HOLD">HOLD</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Bay (só com operação)</label><br />
+        <select id="baySelect" style="width: 140px;">
+          <option value="">(carregar...)</option>
+        </select>
+      </div>
+
+      <div style="display:flex; gap:8px; align-items:flex-end;">
+        <button id="btnLoadBays">Carregar Bays</button>
+        <button id="btnLoadGrid" class="primary">Abrir Bay</button>
+      </div>
+    </div>
+
+    <div class="hint">
+      Clique em um container para marcar como <b>DONE</b>. (Por enquanto só existe DONE.)
+    </div>
+
+    <div id="status" class="statusLine"></div>
+    <div id="meta" class="meta"></div>
+  </div>
+
+  <div class="gridWrap">
+    <table id="gridTable"></table>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  function setStatus(msg, isError=false) {
+    const el = $("status");
+    el.textContent = msg || "";
+    el.className = "statusLine" + (isError ? " error" : "");
+  }
+
+  function api() {
+    return ($("apiBase").value || "").replace(/\/+$/, "");
+  }
+
+  async function httpJson(url, options={}) {
+    const res = await fetch(url, options);
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { /* ignore */ }
+    if (!res.ok) {
+      const msg = (data && (data.error || data.message)) ? (data.error || data.message) : text;
+      throw new Error(msg || `HTTP ${res.status}`);
+    }
+    return data;
+  }
+
+  async function loadBays() {
+    setStatus("Carregando bays...");
+    const worksetId = Number($("worksetId").value);
+    const opType = $("opType").value;
+
+    const url = `${api()}/ops-bays?workset_id=${encodeURIComponent(worksetId)}&operation_type=${encodeURIComponent(opType)}`;
+    const data = await httpJson(url);
+
+    const bays = data.items || [];
+    const baySel = $("baySelect");
+    baySel.innerHTML = "";
+
+    if (bays.length === 0) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "(nenhuma bay encontrada)";
+      baySel.appendChild(opt);
+      setStatus("Nenhuma bay com operação encontrada para esse workset_id/operação.", true);
+      return;
+    }
+
+    // Popular com "bay - area"
+    for (const it of bays) {
+      const opt = document.createElement("option");
+      opt.value = String(it.bay);
+      opt.textContent = `Bay ${it.bay} (${it.area})`;
+      opt.dataset.area = it.area;
+      baySel.appendChild(opt);
+    }
+
+    // Se área atual não bater com a primeira opção, sincroniza
+    const first = baySel.options[0];
+    if (first?.dataset?.area) $("area").value = first.dataset.area;
+
+    setStatus(`Bays carregadas: ${bays.length}.`);
+  }
+
+  function buildCell(cellData) {
+    const div = document.createElement("div");
+    div.className = "cell";
+
+    if (!cellData) {
+      div.classList.add("empty");
+      div.innerHTML = "";
+      return div;
+    }
+
+    const cn = document.createElement("div");
+    cn.className = "cn";
+    cn.textContent = cellData.container_no || "";
+
+    const iso = document.createElement("div");
+    iso.className = "iso";
+    iso.textContent = cellData.iso_type || "";
+
+    const st = document.createElement("div");
+    st.className = "st";
+    st.textContent = cellData.status || "PENDING";
+
+    div.appendChild(cn);
+    div.appendChild(iso);
+    div.appendChild(st);
+
+    if (cellData.status === "DONE") div.classList.add("done");
+
+    return div;
+  }
+
+  async function loadGrid() {
+    setStatus("Abrindo bay...");
+    const worksetId = Number($("worksetId").value);
+
+    // Se o usuário selecionar "Bay X (AREA)", sincroniza a área automaticamente
+    const baySel = $("baySelect");
+    const selectedOpt = baySel.options[baySel.selectedIndex];
+    if (selectedOpt?.dataset?.area) $("area").value = selectedOpt.dataset.area;
+
+    const bay = Number(baySel.value);
+    const area = $("area").value;
+
+    if (!worksetId || !bay || !area) {
+      setStatus("Preencha workset_id, bay e área.", true);
+      return;
+    }
+
+    const url = `${api()}/baygrid?workset_id=${encodeURIComponent(worksetId)}&bay=${encodeURIComponent(bay)}&area=${encodeURIComponent(area)}`;
+    const data = await httpJson(url);
+
+    $("meta").innerHTML = `
+      <b>Bay</b>: ${data.bay} | <b>Área</b>: ${data.area} |
+      <b>Containers</b>: ${data.stats?.containers ?? 0} |
+      <b>Rows</b>: max ${data.stats?.max_row ?? "-"} |
+      <b>Tiers</b>: ${data.stats?.min_tier ?? "-"}..${data.stats?.max_tier ?? "-"}
+    `;
+
+    renderTable(data);
+    setStatus("Bay carregada. Clique para marcar DONE.");
+  }
+
+  function renderTable(data) {
+    const rowsOrder = data.rows_order || [];
+    const tiersOrder = data.tiers_order || [];
+    const grid = data.grid || {};
+
+    const table = $("gridTable");
+    table.innerHTML = "";
+
+    // Header
+    const thead = document.createElement("thead");
+    const hr = document.createElement("tr");
+
+    const th0 = document.createElement("th");
+    th0.className = "left";
+    th0.textContent = "TIER \\ ROW";
+    hr.appendChild(th0);
+
+    for (const r of rowsOrder) {
+      const th = document.createElement("th");
+      th.textContent = String(r).padStart(2, "0");
+      hr.appendChild(th);
+    }
+
+    thead.appendChild(hr);
+    table.appendChild(thead);
+
+    // Body: tiers desc (já vem desc)
+    const tbody = document.createElement("tbody");
+
+    for (const t of tiersOrder) {
+      const tr = document.createElement("tr");
+
+      const tdLeft = document.createElement("td");
+      tdLeft.className = "left";
+      tdLeft.textContent = String(t).padStart(2, "0");
+      tr.appendChild(tdLeft);
+
+      for (const r of rowsOrder) {
+        const td = document.createElement("td");
+
+        const cellData = (grid[String(r)] && grid[String(r)][String(t)]) ? grid[String(r)][String(t)] : null;
+        const cell = buildCell(cellData);
+
+        // click -> DONE (somente se tiver container e não estiver DONE)
+        if (cellData && cellData.container_no) {
+          cell.addEventListener("click", async () => {
+            if (cellData.status === "DONE") return;
+            await markDone(data.workset_id, cellData.container_no);
+            await loadGrid(); // refresh
+          });
+        }
+
+        td.appendChild(cell);
+        tr.appendChild(td);
+      }
+
+      tbody.appendChild(tr);
+    }
+
+    table.appendChild(tbody);
+  }
+
+  async function markDone(worksetId, containerNo) {
+    try {
+      setStatus(`Marcando DONE: ${containerNo}...`);
+      const url = `${api()}/containers/done`;
+      await httpJson(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workset_id: worksetId, container_no: containerNo })
+      });
+      setStatus(`DONE: ${containerNo}`);
+    } catch (e) {
+      setStatus(`Erro ao marcar DONE: ${e.message}`, true);
+    }
+  }
+
+  $("btnLoadBays").addEventListener("click", async () => {
+    try { await loadBays(); }
+    catch (e) { setStatus(`Erro: ${e.message}`, true); }
+  });
+
+  $("btnLoadGrid").addEventListener("click", async () => {
+    try { await loadGrid(); }
+    catch (e) { setStatus(`Erro: ${e.message}`, true); }
+  });
+
+  // Auto: carrega bays ao abrir
+  (async () => {
+    try { await loadBays(); }
+    catch (e) { setStatus(`Erro: ${e.message}`, true); }
+  })();
+</script>
+</body>
+</html>
