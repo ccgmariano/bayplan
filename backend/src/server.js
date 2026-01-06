@@ -177,7 +177,7 @@ app.post("/import/edi", upload.single("file"), async (req, res) => {
     }
 
     const ediText = req.file.buffer.toString("utf8");
-    const messageType = detectMessageType(ediText);
+    detectMessageType(ediText); // mantém para futuro (auditoria), mas não precisamos retornar aqui
 
     const v = await pool.query(
       "insert into voyages (vessel_name, voyage_code) values ($1,$2) returning *",
@@ -191,12 +191,6 @@ app.post("/import/edi", upload.single("file"), async (req, res) => {
     );
     const workset = w.rows[0];
 
-    const imp = await pool.query(
-      "insert into edi_imports (voyage_id, workset_id, filename, message_type) values ($1,$2,$3,$4) returning *",
-      [voyage.id, workset.id, req.file.originalname || null, messageType]
-    );
-    const ediImport = imp.rows[0];
-
     const units = parseBaplieMinimal(ediText);
 
     const bayAreaSet = new Set();
@@ -206,13 +200,6 @@ app.post("/import/edi", upload.single("file"), async (req, res) => {
       const tier = u.tier;
       const area = (typeof tier === "number" && tier >= 80) ? "DECK" : "HOLD";
       if (typeof u.bay === "number") bayAreaSet.add(`${u.bay}|${area}`);
-
-      await pool.query(
-        `insert into stowage_units
-         (import_id, container_no, iso_type, bay, row, tier, area, raw_pos)
-         values ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [ediImport.id, u.container_no, u.iso_type, u.bay, u.row, u.tier, area, u.raw_pos]
-      );
 
       const c = await pool.query(
         `insert into containers (workset_id, container_no, iso_type, bay, row, tier, area)
@@ -242,7 +229,6 @@ app.post("/import/edi", upload.single("file"), async (req, res) => {
       ok: true,
       voyage_id: voyage.id,
       workset_id: workset.id,
-      import_id: ediImport.id,
       containers_parsed: units.length,
       containers_saved: containersInserted,
       bays_with_ops: bayAreaSet.size
@@ -253,38 +239,8 @@ app.post("/import/edi", upload.single("file"), async (req, res) => {
   }
 });
 
-// --------- BAYVIEW (lista “crua”, útil p/ debug) ----------
-app.get("/bayview", async (req, res) => {
-  const { workset_id, bay, area } = req.query;
-  if (!workset_id || !bay || !area) {
-    return res.status(400).json({ error: "workset_id, bay and area are required" });
-  }
-  if (!["DECK", "HOLD"].includes(area)) {
-    return res.status(400).json({ error: "area must be DECK or HOLD" });
-  }
-
-  const r = await pool.query(
-    `select container_no, iso_type, bay, row, tier, area, status, done_at
-     from containers
-     where workset_id = $1 and bay = $2 and area = $3
-     order by tier desc nulls last, row asc nulls last, container_no asc`,
-    [workset_id, bay, area]
-  );
-
-  res.json({
-    workset_id: Number(workset_id),
-    bay: Number(bay),
-    area,
-    count: r.rows.length,
-    containers: r.rows
-  });
-});
-
-// --------- Layout Engine derivado do EDI ----------
+// --------- Layout helpers ----------
 function buildRowOrder(maxRow) {
-  // regra que você definiu:
-  // par (10): 10 08 06 04 02 01 03 05 07 09
-  // ímpar: adiciona 00 no meio
   const evens = [];
   for (let r = maxRow; r >= 2; r--) if (r % 2 === 0) evens.push(r);
 
@@ -296,7 +252,6 @@ function buildRowOrder(maxRow) {
 }
 
 function buildTierOrder(minTier, maxTier) {
-  // tiers pares; devolve ordem decrescente (igual ao papel)
   if (!Number.isFinite(minTier) || !Number.isFinite(maxTier)) return [];
   const start = (maxTier % 2 === 0) ? maxTier : maxTier - 1;
   const end = (minTier % 2 === 0) ? minTier : minTier + 1;
@@ -306,7 +261,7 @@ function buildTierOrder(minTier, maxTier) {
   return tiers;
 }
 
-// --------- OPS-BAYS (seletor que pula só nas bays com operação) ----------
+// --------- OPS-BAYS ----------
 app.get("/ops-bays", async (req, res) => {
   const { workset_id, operation_type } = req.query;
   if (!workset_id || !operation_type) {
@@ -328,17 +283,12 @@ app.get("/ops-bays", async (req, res) => {
   res.json({ workset_id: Number(workset_id), operation_type, items: r.rows });
 });
 
-// --------- BAYGRID (formato pronto para desenhar igual ao PDF) ----------
+// --------- BAYGRID ----------
 app.get("/baygrid", async (req, res) => {
   const { workset_id, bay, area } = req.query;
-  if (!workset_id || !bay || !area) {
-    return res.status(400).json({ error: "workset_id, bay and area are required" });
-  }
-  if (!["DECK", "HOLD"].includes(area)) {
-    return res.status(400).json({ error: "area must be DECK or HOLD" });
-  }
+  if (!workset_id || !bay || !area) return res.status(400).json({ error: "workset_id, bay and area are required" });
+  if (!["DECK", "HOLD"].includes(area)) return res.status(400).json({ error: "area must be DECK or HOLD" });
 
-  // pega os containers daquela bay/área
   const r = await pool.query(
     `select container_no, iso_type, row, tier, status, done_at
      from containers
@@ -346,7 +296,6 @@ app.get("/baygrid", async (req, res) => {
     [workset_id, bay, area]
   );
 
-  // deriva limites reais (do próprio EDI importado)
   let maxRow = 0;
   let minTier = Infinity;
   let maxTier = -Infinity;
@@ -360,10 +309,8 @@ app.get("/baygrid", async (req, res) => {
   const rows_order = buildRowOrder(maxRow);
   const tiers_order = buildTierOrder(minTier === Infinity ? NaN : minTier, maxTier);
 
-  // monta mapa row->tier->container
-  const grid = {}; // { "16": { "88": {...} } }
+  const grid = {};
   for (const row of rows_order) grid[String(row)] = {};
-
   for (const c of r.rows) {
     const rr = String(c.row);
     const tt = String(c.tier);
@@ -390,6 +337,28 @@ app.get("/baygrid", async (req, res) => {
     tiers_order,
     grid
   });
+});
+
+// --------- DONE (por enquanto só DONE) ----------
+app.post("/containers/done", async (req, res) => {
+  const { workset_id, container_no } = req.body;
+  if (!workset_id || !container_no) {
+    return res.status(400).json({ error: "workset_id and container_no are required" });
+  }
+
+  const r = await pool.query(
+    `update containers
+     set status = 'DONE', done_at = now()
+     where workset_id = $1 and container_no = $2
+     returning workset_id, container_no, status, done_at, bay, row, tier, area`,
+    [workset_id, container_no]
+  );
+
+  if (r.rowCount === 0) {
+    return res.status(404).json({ error: "container not found for this workset_id" });
+  }
+
+  res.json({ ok: true, container: r.rows[0] });
 });
 
 const PORT = Number(process.env.PORT) || 3000;
