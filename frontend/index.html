@@ -36,10 +36,14 @@
     .cell {
       width: 140px; height: 74px; border-radius: 8px; padding: 6px;
       display: flex; flex-direction: column; justify-content: center; gap: 2px;
-      cursor: pointer; user-select: none; background: #ffffff;
+      cursor: pointer; user-select: none;
+      background: #ffffff;
     }
     .cell.empty { cursor: default; background: #fafafa; }
-    .cell.done { background: #e7f7ee; }
+
+    /* VERDE FORÇADO para DONE */
+    .cell.done { background: #e7f7ee !important; border: 1px solid #86efac !important; }
+    .cell.done .st { color: #065f46; font-weight: 800; }
 
     .pos { font-size: 11px; color: #111827; font-weight: 700; }
     .cn  { font-weight: 800; font-size: 12px; color: #111827; }
@@ -47,8 +51,6 @@
     .od  { font-size: 11px; color: #6b7280; }
     .wt  { font-size: 11px; color: #6b7280; }
     .st  { font-size: 11px; color: #6b7280; }
-
-    .cell.done .st { color: #065f46; font-weight: 700; }
   </style>
 </head>
 <body>
@@ -56,7 +58,6 @@
   <div class="card">
     <h1 id="title">BayPlan</h1>
 
-    <!-- Config -->
     <div class="row">
       <div>
         <label>API Base</label><br />
@@ -83,7 +84,11 @@
 
     <div class="section">
       <div class="row" id="bayButtons"></div>
-      <div class="hint">Bays exibidas = somente bays retornadas pelo endpoint <b>/ops-bays</b> (sem bays inventadas).</div>
+      <div class="hint">
+        Clique no container:
+        <b>PENDING</b> → vira <b>DONE</b>.
+        <b>DONE</b> → pergunta e faz <b>UNDONE</b>.
+      </div>
     </div>
 
     <div id="status" class="status"></div>
@@ -101,7 +106,8 @@
     op: "DISCHARGE",
     area: "HOLD",
     bay: null,
-    bayAreas: new Map(), // bay -> Set(areas disponíveis)
+    bayAreas: new Map(), // bay -> Set(areas)
+    lastGrid: null
   };
 
   function setStatus(msg, isError=false) {
@@ -146,16 +152,12 @@
   }
 
   function formatPos(bay, row, tier) {
-    // exibe como no PDF: 440914 (bay 44, row 09, tier 14) ou com 0 à esquerda conforme necessário
-    const b = String(Number(bay)).padStart(2, "0");     // 44
-    const r = String(Number(row)).padStart(2, "0");     // 09
-    const t = String(Number(tier)).padStart(2, "0");    // 14
+    const b = String(Number(bay)).padStart(2, "0");
+    const r = String(Number(row)).padStart(2, "0");
+    const t = String(Number(tier)).padStart(2, "0");
     return `${b}${r}${t}`;
   }
 
-  // ------------------
-  // Carrega bays via /ops-bays e AGRUPA por bay (dedupe)
-  // ------------------
   async function loadBays() {
     setStatus("Carregando bays...");
     const worksetId = Number($("worksetId").value);
@@ -164,7 +166,6 @@
 
     state.bayAreas.clear();
 
-    // data.items vem como [{bay, area}, ...] — vamos agrupar por bay
     for (const it of (data.items || [])) {
       const bay = Number(it.bay);
       const area = String(it.area);
@@ -173,19 +174,17 @@
     }
 
     const bays = Array.from(state.bayAreas.keys()).sort((a,b) => a-b);
-
     const wrap = $("bayButtons");
     wrap.innerHTML = "";
 
     if (bays.length === 0) {
-      setStatus("Nenhuma bay com operação encontrada para esse workset_id/operação.", true);
+      setStatus("Nenhuma bay com operação encontrada.", true);
       $("gridTable").innerHTML = "";
       $("meta").textContent = "";
       state.bay = null;
       return;
     }
 
-    // renderiza botões de bay
     for (const bay of bays) {
       const btn = document.createElement("button");
       btn.className = "small";
@@ -195,46 +194,39 @@
       btn.addEventListener("click", async () => {
         setBay(bay);
 
-        // se a área atual não existir para essa bay, troca automaticamente para uma área válida
         const areas = state.bayAreas.get(bay) || new Set();
         if (!areas.has(state.area)) {
           if (areas.has("HOLD")) setArea("HOLD");
           else if (areas.has("DECK")) setArea("DECK");
         }
-
         await loadGrid();
       });
 
       wrap.appendChild(btn);
     }
 
-    // seleciona a primeira bay por padrão
     setBay(bays[0]);
 
-    // se a área atual não existir nessa bay, ajusta
     const a0 = state.bayAreas.get(bays[0]) || new Set();
     if (!a0.has(state.area)) {
       if (a0.has("HOLD")) setArea("HOLD");
       else if (a0.has("DECK")) setArea("DECK");
     }
 
-    setStatus(`Bays carregadas: ${bays.length}. Clique em uma bay para abrir.`);
+    setStatus(`Bays carregadas: ${bays.length}.`);
   }
 
-  // ------------------
-  // Carrega grid via /baygrid e renderiza
-  // ------------------
   async function loadGrid() {
     const worksetId = Number($("worksetId").value);
     const bay = Number(state.bay);
     const area = state.area;
-
     if (!worksetId || !bay || !area) return;
 
     setStatus(`Abrindo Bay ${bay} (${area})...`);
 
     const url = `${apiBase()}/baygrid?workset_id=${encodeURIComponent(worksetId)}&bay=${encodeURIComponent(bay)}&area=${encodeURIComponent(area)}`;
     const data = await httpJson(url);
+    state.lastGrid = data;
 
     $("meta").innerHTML = `
       <b>Operação</b>: ${state.op} |
@@ -245,7 +237,7 @@
     `;
 
     renderTable(data);
-    setStatus(`Bay ${bay} (${area}) carregada. Clique no container para DONE.`);
+    setStatus(`Bay ${bay} (${area}) carregada.`);
   }
 
   function buildCell(cellData) {
@@ -259,7 +251,6 @@
 
     const pos = document.createElement("div");
     pos.className = "pos";
-    // posição calculada pelo que existe hoje (bay/row/tier)
     pos.textContent = formatPos(cellData.bay, cellData.row, cellData.tier);
 
     const cn = document.createElement("div");
@@ -270,7 +261,6 @@
     iso.className = "iso";
     iso.textContent = cellData.iso_type || "";
 
-    // Ainda não existe no banco (vamos adicionar depois)
     const od = document.createElement("div");
     od.className = "od";
     od.textContent = `OD: —`;
@@ -303,7 +293,6 @@
     const table = $("gridTable");
     table.innerHTML = "";
 
-    // Header
     const thead = document.createElement("thead");
     const hr = document.createElement("tr");
 
@@ -321,7 +310,6 @@
     thead.appendChild(hr);
     table.appendChild(thead);
 
-    // Body
     const tbody = document.createElement("tbody");
 
     for (const t of tiersOrder) {
@@ -335,13 +323,19 @@
       for (const r of rowsOrder) {
         const td = document.createElement("td");
 
-        // IMPORTANTÍSSIMO: grid vem com chaves string
         const cellData = (grid[String(r)] && grid[String(r)][String(t)]) ? grid[String(r)][String(t)] : null;
         const cell = buildCell(cellData);
 
         if (cellData && cellData.container_no) {
           cell.addEventListener("click", async () => {
-            if (cellData.status === "DONE") return;
+            if (cellData.status === "DONE") {
+              const ok = window.confirm(`Tem certeza que deseja fazer UNDONE do container ${cellData.container_no}?`);
+              if (!ok) return;
+              await markUndone(data.workset_id, cellData.container_no);
+              await loadGrid();
+              return;
+            }
+
             await markDone(data.workset_id, cellData.container_no);
             await loadGrid();
           });
@@ -372,12 +366,26 @@
     }
   }
 
+  async function markUndone(worksetId, containerNo) {
+    try {
+      setStatus(`Fazendo UNDONE: ${containerNo}...`);
+      const url = `${apiBase()}/containers/undone`;
+      await httpJson(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workset_id: worksetId, container_no: containerNo })
+      });
+      setStatus(`UNDONE: ${containerNo}`);
+    } catch (e) {
+      setStatus(`Erro ao fazer UNDONE: ${e.message}`, true);
+    }
+  }
+
   async function reloadAll() {
     try {
       setStatus("");
       $("gridTable").innerHTML = "";
       $("meta").textContent = "";
-
       await loadBays();
       await loadGrid();
     } catch (e) {
@@ -385,30 +393,14 @@
     }
   }
 
-  // Eventos
   $("btnReload").addEventListener("click", reloadAll);
 
-  $("btnDISCHARGE").addEventListener("click", async () => {
-    setOp("DISCHARGE");
-    await reloadAll();
-  });
+  $("btnDISCHARGE").addEventListener("click", async () => { setOp("DISCHARGE"); await reloadAll(); });
+  $("btnLOAD").addEventListener("click", async () => { setOp("LOAD"); await reloadAll(); });
 
-  $("btnLOAD").addEventListener("click", async () => {
-    setOp("LOAD");
-    await reloadAll();
-  });
+  $("btnDECK").addEventListener("click", async () => { setArea("DECK"); await loadGrid(); });
+  $("btnHOLD").addEventListener("click", async () => { setArea("HOLD"); await loadGrid(); });
 
-  $("btnDECK").addEventListener("click", async () => {
-    setArea("DECK");
-    await loadGrid();
-  });
-
-  $("btnHOLD").addEventListener("click", async () => {
-    setArea("HOLD");
-    await loadGrid();
-  });
-
-  // init
   setOp("DISCHARGE");
   setArea("HOLD");
   reloadAll();
