@@ -21,6 +21,7 @@
     button { cursor: pointer; }
     button.active { background: #111827; color: #fff; border-color: #111827; }
     button.small { height: 32px; font-size: 13px; padding: 0 12px; }
+
     .hint { margin-top: 6px; font-size: 12px; color: #6b7280; }
     .status { margin-top: 8px; font-size: 12px; color: #111827; }
     .status.error { color: #b91c1c; }
@@ -41,7 +42,7 @@
     }
     .cell.empty { cursor: default; background: #fafafa; }
 
-    /* VERDE FORÇADO para DONE */
+    /* DONE verde (forçado) */
     .cell.done { background: #e7f7ee !important; border: 1px solid #86efac !important; }
     .cell.done .st { color: #065f46; font-weight: 800; }
 
@@ -58,6 +59,7 @@
   <div class="card">
     <h1 id="title">BayPlan</h1>
 
+    <!-- Nível 1: Base/API + workset -->
     <div class="row">
       <div>
         <label>API Base</label><br />
@@ -72,16 +74,19 @@
       </div>
     </div>
 
+    <!-- Nível 2: operação (lado a lado) -->
     <div class="section row">
       <button id="btnDISCHARGE" class="active">DISCHARGE</button>
       <button id="btnLOAD">LOAD</button>
     </div>
 
+    <!-- Nível 3: área -->
     <div class="section row">
       <button id="btnDECK">DECK</button>
       <button id="btnHOLD" class="active">HOLD</button>
     </div>
 
+    <!-- Nível 4: bays (todas em botões) -->
     <div class="section">
       <div class="row" id="bayButtons"></div>
       <div class="hint">
@@ -107,7 +112,9 @@
     area: "HOLD",
     bay: null,
     bayAreas: new Map(), // bay -> Set(areas)
-    lastGrid: null
+    lastGrid: null,
+    vesselName: null,
+    voyageCode: null
   };
 
   function setStatus(msg, isError=false) {
@@ -132,6 +139,15 @@
     return data;
   }
 
+  function refreshTitle() {
+    const base = "BayPlan";
+    if (state.vesselName || state.voyageCode) {
+      $("title").textContent = `${base} — ${state.vesselName || ""} ${state.voyageCode ? "(" + state.voyageCode + ")" : ""}`.trim();
+    } else {
+      $("title").textContent = base;
+    }
+  }
+
   function setOp(op) {
     state.op = op;
     $("btnDISCHARGE").classList.toggle("active", op === "DISCHARGE");
@@ -151,11 +167,11 @@
     if (btn) btn.classList.add("active");
   }
 
+  function pad2(n) { return String(Number(n)).padStart(2, "0"); }
+
   function formatPos(bay, row, tier) {
-    const b = String(Number(bay)).padStart(2, "0");
-    const r = String(Number(row)).padStart(2, "0");
-    const t = String(Number(tier)).padStart(2, "0");
-    return `${b}${r}${t}`;
+    // posição: BB RR TT (com zero à esquerda). O PDF às vezes omite o zero do bay; aqui fica consistente.
+    return `${pad2(bay)}${pad2(row)}${pad2(tier)}`;
   }
 
   async function loadBays() {
@@ -163,6 +179,11 @@
     const worksetId = Number($("worksetId").value);
     const url = `${apiBase()}/ops-bays?workset_id=${encodeURIComponent(worksetId)}&operation_type=${encodeURIComponent(state.op)}`;
     const data = await httpJson(url);
+
+    // Se backend começar a retornar metadados do navio aqui, já aproveitamos.
+    state.vesselName = data.vessel_name || state.vesselName;
+    state.voyageCode = data.voyage_code || state.voyageCode;
+    refreshTitle();
 
     state.bayAreas.clear();
 
@@ -194,17 +215,20 @@
       btn.addEventListener("click", async () => {
         setBay(bay);
 
+        // se a área selecionada não existir nessa bay, troca para uma válida
         const areas = state.bayAreas.get(bay) || new Set();
         if (!areas.has(state.area)) {
           if (areas.has("HOLD")) setArea("HOLD");
           else if (areas.has("DECK")) setArea("DECK");
         }
+
         await loadGrid();
       });
 
       wrap.appendChild(btn);
     }
 
+    // Seleção inicial automática
     setBay(bays[0]);
 
     const a0 = state.bayAreas.get(bays[0]) || new Set();
@@ -227,6 +251,11 @@
     const url = `${apiBase()}/baygrid?workset_id=${encodeURIComponent(worksetId)}&bay=${encodeURIComponent(bay)}&area=${encodeURIComponent(area)}`;
     const data = await httpJson(url);
     state.lastGrid = data;
+
+    // Se backend começar a retornar metadados do navio aqui, já aproveitamos.
+    state.vesselName = data.vessel_name || state.vesselName;
+    state.voyageCode = data.voyage_code || state.voyageCode;
+    refreshTitle();
 
     $("meta").innerHTML = `
       <b>Operação</b>: ${state.op} |
@@ -261,13 +290,14 @@
     iso.className = "iso";
     iso.textContent = cellData.iso_type || "";
 
+    // Campos opcionais (só aparecem quando o backend passar)
     const od = document.createElement("div");
     od.className = "od";
-    od.textContent = `OD: —`;
+    od.textContent = `OD: ${cellData.origin_dest || cellData.od || cellData.pod_pol || "—"}`;
 
     const wt = document.createElement("div");
     wt.className = "wt";
-    wt.textContent = `PESO: —`;
+    wt.textContent = `PESO: ${cellData.weight ?? cellData.peso ?? "—"}`;
 
     const st = document.createElement("div");
     st.className = "st";
